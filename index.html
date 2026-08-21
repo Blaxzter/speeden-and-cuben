@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Speed Cuben — CFOP algorithm reference</title>
+    <meta
+      name="description"
+      content="A modern CFOP reference: all 41 F2L, 57 OLL and 21 PLL cases with live 3D algorithm playback."
+    />
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23111318'/%3E%3Crect x='6' y='6' width='8' height='8' rx='2' fill='%23f5c518'/%3E%3Crect x='18' y='6' width='8' height='8' rx='2' fill='%234f8cff'/%3E%3Crect x='6' y='18' width='8' height='8' rx='2' fill='%23ff5f56'/%3E%3Crect x='18' y='18' width='8' height='8' rx='2' fill='%232ecc71'/%3E%3C/svg%3E" />
+  </head>
+  <body>
+    <div id="app">
+      <header class="topbar">
+        <div class="brand">
+          <span class="brand-mark" aria-hidden="true"></span>
+          <span class="brand-name">Speed Cuben</span>
+        </div>
+
+        <nav class="setnav" id="setnav" aria-label="Algorithm set"></nav>
+
+        <div class="cross-toggle" id="crosstoggle" role="group" aria-label="Cross colour"></div>
+
+        <div class="search">
+          <svg viewBox="0 0 20 20" aria-hidden="true" class="search-icon">
+            <circle cx="9" cy="9" r="6" fill="none" stroke="currentColor" stroke-width="2" />
+            <path d="M13.5 13.5 17 17" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+          </svg>
+          <input
+            id="search"
+            type="search"
+            placeholder="Search case, name or algorithm…"
+            autocomplete="off"
+            spellcheck="false"
+          />
+          <kbd>/</kbd>
+        </div>
+      </header>
+
+      <div class="layout">
+        <aside class="sidebar" id="sidebar"></aside>
+
+        <main class="grid-pane">
+          <div class="grid-head">
+            <h1 id="grid-title">F2L</h1>
+            <p id="grid-count" class="muted"></p>
+          </div>
+          <div id="grid" class="grid"></div>
+          <p id="empty" class="empty" hidden>No cases match that filter.</p>
+        </main>
+
+        <section class="detail" id="detail" aria-live="polite"></section>
+      </div>
+
+      <footer class="site-foot">
+        <span>© 2026 Speed Cuben</span>
+        <span class="sep" aria-hidden="true">·</span>
+        <a href="/impressum">Impressum</a>
+        <span class="sep" aria-hidden="true">·</span>
+        <a href="/datenschutz">Datenschutz</a>
+        <span class="sep" aria-hidden="true">·</span>
+        <a href="https://github.com/Blaxzter/speeden-and-cuben" target="_blank" rel="noreferrer">GitHub</a>
+      </footer>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

@@ -1,0 +1,227 @@
+/*
+ * Long-form chrome for the standalone legal pages (Impressum / Datenschutz).
+ * Deliberately separate from the app shell — no sidebar, no detail pane — so
+ * the text reads as a document. Shares the app's tokens from style.css, so it
+ * stays visually part of Speed Cuben.
+ */
+
+.legal-page {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+}
+
+/* ---------- header ---------- */
+
+.legal-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex: 0 0 auto;
+  height: 60px;
+  padding: 0 20px;
+  border-bottom: 1px solid var(--line);
+  background: linear-gradient(180deg, #12151c, #0e1116);
+  position: sticky;
+  top: 0;
+  z-index: 5;
+}
+
+.legal-top .brand {
+  color: inherit;
+  text-decoration: none;
+}
+
+.back-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 13px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--bg);
+  color: var(--text-dim);
+  font-size: 13px;
+  font-weight: 600;
+  text-decoration: none;
+  white-space: nowrap;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.back-link:hover {
+  color: var(--text);
+  border-color: #3a4356;
+}
+
+.back-link svg {
+  width: 14px;
+  height: 14px;
+}
+
+/* ---------- prose ---------- */
+
+.legal {
+  flex: 1 1 auto;
+  width: 100%;
+  max-width: 780px;
+  margin: 0 auto;
+  padding: 46px 24px 72px;
+  font-size: 15px;
+  line-height: 1.68;
+  color: var(--text-dim);
+  overflow-wrap: break-word;
+}
+
+.legal h1 {
+  margin: 0 0 8px;
+  font-size: 30px;
+  line-height: 1.2;
+  letter-spacing: -0.02em;
+  color: var(--text);
+}
+
+.legal h2 {
+  margin: 42px 0 12px;
+  padding-top: 22px;
+  border-top: 1px solid var(--line-soft);
+  font-size: 19px;
+  letter-spacing: -0.01em;
+  color: var(--text);
+}
+
+/* The first heading after the lead needs no separator above it. */
+.legal h1 + h2,
+.legal .lead + h2 {
+  border-top: 0;
+  padding-top: 0;
+  margin-top: 30px;
+}
+
+/* …nor does one right after an <hr>, which already separates. */
+.legal hr + h2 {
+  border-top: 0;
+  padding-top: 0;
+  margin-top: 0;
+}
+
+.legal h3 {
+  margin: 26px 0 8px;
+  font-size: 16px;
+  color: var(--text);
+}
+
+.legal h4,
+.legal h5 {
+  margin: 20px 0 6px;
+  font-size: 15px;
+  color: var(--text);
+}
+
+.legal .lead {
+  margin: 0 0 6px;
+  font-size: 16px;
+  color: var(--text-faint);
+}
+
+.legal p {
+  margin: 0 0 14px;
+}
+
+.legal a {
+  color: var(--blue);
+  text-decoration: none;
+  border-bottom: 1px solid rgba(79, 140, 255, 0.3);
+  transition: border-color 0.15s;
+}
+
+.legal a:hover {
+  border-bottom-color: var(--blue);
+}
+
+.legal strong {
+  color: var(--text);
+  font-weight: 650;
+}
+
+.legal ul,
+.legal ol {
+  margin: 0 0 16px;
+  padding-left: 22px;
+}
+
+.legal li {
+  margin-bottom: 7px;
+}
+
+.legal li::marker {
+  color: var(--text-faint);
+}
+
+.legal address {
+  font-style: normal;
+  margin: 0 0 14px;
+  padding: 14px 16px;
+  background: var(--bg-card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  line-height: 1.6;
+}
+
+.legal code {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 0.88em;
+  padding: 1px 5px;
+  border-radius: 5px;
+  background: var(--bg-raised);
+  border: 1px solid var(--line-soft);
+  color: var(--text);
+}
+
+.legal hr {
+  margin: 34px 0;
+  border: 0;
+  border-top: 1px solid var(--line-soft);
+}
+
+/* The generated Datenschutz text ships its own table of contents. */
+.legal ul.index {
+  padding-left: 0;
+  list-style: none;
+  columns: 2;
+  column-gap: 28px;
+  font-size: 14px;
+}
+
+.legal ul.index li {
+  break-inside: avoid;
+  margin-bottom: 5px;
+}
+
+@media (max-width: 620px) {
+  .legal ul.index {
+    columns: 1;
+  }
+}
+
+.legal-note {
+  margin-top: 34px;
+  padding: 13px 15px;
+  border: 1px dashed var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--bg-raised);
+  font-size: 13.5px;
+  color: var(--text-faint);
+}
+
+@media (max-width: 620px) {
+  .legal {
+    padding: 32px 18px 56px;
+    font-size: 14.5px;
+  }
+
+  .legal h1 {
+    font-size: 25px;
+  }
+}

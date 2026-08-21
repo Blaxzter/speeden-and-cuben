@@ -1,0 +1,20 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "speeden-and-cuben",
+  "compatibility_date": "2026-08-21",
+  // Assets-only Worker: no script needed, Cloudflare serves ./dist directly.
+  "assets": {
+    "directory": "./dist",
+    // /impressum and /datenschutz are real files (impressum.html,
+    // datenschutz.html) — html_handling resolves the extensionless path to
+    // them; the SPA fallback only catches everything else.
+    "html_handling": "auto-trailing-slash",
+    "not_found_handling": "single-page-application"
+  },
+  "routes": [
+    {
+      "pattern": "speeden-and-cuben.fabraham.dev",
+      "custom_domain": true
+    }
+  ]
+}

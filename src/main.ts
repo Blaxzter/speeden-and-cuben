@@ -1,0 +1,905 @@
+import "cubing/twisty";
+import "./style.css";
+import { F2L_CASES } from "./data/f2l";
+import { OLL_CASES } from "./data/oll";
+import { PLL_CASES } from "./data/pll";
+import type { CaseSet, CubeCase, F2LRecognition } from "./data/types";
+import { cubeIcon, crossFace, FACE_WORD, type IconSpec } from "./finder-icons";
+
+const SETS: Record<CaseSet, CubeCase[]> = { F2L: F2L_CASES, OLL: OLL_CASES, PLL: PLL_CASES };
+const SET_ORDER: CaseSet[] = ["F2L", "OLL", "PLL"];
+
+const BLURB: Record<CaseSet, string> = {
+  F2L: "First two layers — solve a corner/edge pair into its slot.",
+  OLL: "Orient the last layer — make the whole top face one colour.",
+  PLL: "Permute the last layer — move the pieces into place.",
+};
+
+/** The flat last-layer diagram is how cubers actually recognise OLL and PLL. */
+const THUMB_VIZ: Record<CaseSet, string> = {
+  F2L: "3D",
+  OLL: "experimental-2D-LL",
+  PLL: "experimental-2D-LL",
+};
+
+// ---------------------------------------------------------------- stickering
+//
+// cubing.js ships with white on U and yellow on D, so out of the box the cube
+// looks like a yellow-cross solve. Rotating it with x2 puts white on the bottom
+// where most cubers keep it — but the built-in stickering masks ("OLL", "PLL",
+// "F2L") are keyed by piece identity, so after a rotation they dim the layer
+// that has moved to the *bottom*. We therefore build the masks ourselves and
+// point them at whichever pieces form the last layer in the chosen orientation.
+
+type Cross = "white" | "yellow";
+
+/** Pieces whose home is the last layer, per orientation. */
+const LL_PIECES: Record<Cross, number[]> = { white: [4, 5, 6, 7], yellow: [0, 1, 2, 3] };
+/** Index of the last-layer centre (CENTERS is ordered U L F R B D). */
+const LL_CENTRE: Record<Cross, number> = { white: 5, yellow: 0 };
+// x2 keeps white on the bottom AND turns the nicer pair of side faces toward
+// the camera: blue front / red right, instead of z2's green front / orange right.
+const SETUP_ALG: Record<Cross, string> = { white: "x2", yellow: "" };
+
+type FaceletMask = "regular" | "ignored";
+
+function stickeringMask(set: CaseSet, cross: Cross) {
+  const ll = LL_PIECES[cross];
+  const facelets = (piece: number, count: number): FaceletMask[] => {
+    const isLL = ll.includes(piece);
+    if (set === "F2L") return Array(count).fill(isLL ? "ignored" : "regular");
+    if (set === "PLL") return Array(count).fill(isLL ? "regular" : "ignored");
+    // OLL only cares whether a last-layer sticker points along the U/D axis,
+    // which is always facelet 0 — the sticker orientation is measured from.
+    return Array.from({ length: count }, (_, f) => (isLL && f === 0 ? "regular" : "ignored"));
+  };
+  const centre = (i: number): FaceletMask => {
+    if (i === LL_CENTRE[cross]) return set === "F2L" ? "ignored" : "regular";
+    return set === "F2L" ? "regular" : "ignored";
+  };
+  return {
+    orbits: {
+      EDGES: { pieces: Array.from({ length: 12 }, (_, i) => ({ facelets: facelets(i, 2) })) },
+      CORNERS: { pieces: Array.from({ length: 8 }, (_, i) => ({ facelets: facelets(i, 3) })) },
+      CENTERS: { pieces: Array.from({ length: 6 }, (_, i) => ({ facelets: [centre(i)] })) },
+    },
+  };
+}
+
+// ---------------------------------------------------------------- state
+
+type Finder = { cornerPos: number | null; cornerOri: number | null; edgePos: number | null; edgeOri: number | null };
+const emptyFinder = (): Finder => ({ cornerPos: null, cornerOri: null, edgePos: null, edgeOri: null });
+
+function stored<T>(key: string, fallback: T): T {
+  try {
+    const v = localStorage.getItem(key);
+    return v === null ? fallback : (JSON.parse(v) as T);
+  } catch {
+    return fallback;
+  }
+}
+function store(key: string, value: unknown) {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    /* blocked storage — the setting simply will not persist */
+  }
+}
+
+const state = {
+  set: "F2L" as CaseSet,
+  query: "",
+  group: null as string | null,
+  selected: F2L_CASES[0].id as string | null,
+  algIndex: 0,
+  speed: stored<number>("speed", 1),
+  cross: stored<Cross>("cross", "white"),
+  finder: emptyFinder(),
+};
+
+const $ = <T extends HTMLElement>(sel: string) => document.querySelector(sel) as T;
+const el = (tag: string, cls?: string, text?: string) => {
+  const n = document.createElement(tag);
+  if (cls) n.className = cls;
+  if (text !== undefined) n.textContent = text;
+  return n;
+};
+const tokens = (alg: string) => alg.trim().split(/\s+/).filter(Boolean);
+const isRotation = (m: string) => /^[xyz]['2]?$/.test(m);
+/**
+ * Algs are stored rotation-neutral so the stickering mask stays aligned (see
+ * scripts/fix-rotations.ts), but the cancelling rotation on the end is an
+ * implementation detail — cubers do not write it, so it is not shown.
+ */
+const displayTokens = (alg: string) => {
+  const t = tokens(alg);
+  while (t.length && isRotation(t[t.length - 1])) t.pop();
+  return t;
+};
+const displayAlg = (alg: string) => displayTokens(alg).join(" ");
+const moveCount = (alg: string) => displayTokens(alg).filter((m) => !isRotation(m)).length;
+
+// ---------------------------------------------------------------- filtering
+
+/**
+ * Every case is stored in one fixed presentation — corner at front-right where
+ * it is in the U layer, otherwise edge at front — because turning the U layer
+ * is free and never changes which case you are looking at. Nobody holds their
+ * cube that way by chance, so match the finder's readings against the case in
+ * *any* U turn rather than only the stored one. Corner and edge share the turn:
+ * it is one cube, so their positions move together. Orientation is unaffected,
+ * which is what makes the "cross sticker" and "flipped" answers absolute.
+ */
+function finderMatches(r: F2LRecognition, f: Finder): boolean {
+  for (let auf = 0; auf < 4; auf++) {
+    const turn = (p: number) => (p > 3 ? p : (p + auf) % 4);
+    if (f.cornerPos !== null && turn(f.cornerPos) !== r.cornerPos) continue;
+    if (f.edgePos !== null && turn(f.edgePos) !== r.edgePos) continue;
+    if (f.cornerOri !== null && f.cornerOri !== r.cornerOri) continue;
+    if (f.edgeOri !== null && f.edgeOri !== r.edgeOri) continue;
+    return true;
+  }
+  return false;
+}
+
+function visibleCases(): CubeCase[] {
+  const q = state.query.trim().toLowerCase();
+  const f = state.finder;
+  return SETS[state.set].filter((c) => {
+    if (state.group && c.group !== state.group) return false;
+    if (state.set === "F2L" && c.recognition && !finderMatches(c.recognition, f)) return false;
+    if (!q) return true;
+    return (
+      c.label.toLowerCase() === q ||
+      c.name.toLowerCase().includes(q) ||
+      c.group.toLowerCase().includes(q) ||
+      (c.hint ?? "").toLowerCase().includes(q) ||
+      c.algs.some((a) => displayAlg(a).toLowerCase().includes(q))
+    );
+  });
+}
+
+// ---------------------------------------------------------------- players
+
+/**
+ * Mounting 57 players at once costs seconds of jank, so only the first screenful
+ * is built eagerly and the rest wait until they scroll into view. The eager batch
+ * matters: a browser does not compute intersections for a hidden tab, so a purely
+ * lazy grid renders completely empty if the page is opened in a background tab.
+ */
+const EAGER_THUMBS = 24;
+/** Cards by case id, so selecting one does not force a grid rebuild. */
+const cardElements = new Map<string, HTMLElement>();
+const lazyThumbs = new WeakMap<Element, () => void>();
+const thumbObserver = new IntersectionObserver(
+  (entries) => {
+    for (const e of entries) {
+      if (!e.isIntersecting) continue;
+      const mount = lazyThumbs.get(e.target);
+      if (mount) {
+        mount();
+        lazyThumbs.delete(e.target);
+        thumbObserver.unobserve(e.target);
+      }
+    }
+  },
+  { rootMargin: "300px" },
+);
+
+type Player = HTMLElement & {
+  alg: string;
+  experimentalSetupAlg: string;
+  experimentalSetupAnchor: string;
+  tempoScale: number;
+  experimentalStickeringMaskOrbits: unknown;
+  experimentalModel: any;
+  play(): void;
+  pause(): void;
+  jumpToStart(): void;
+  jumpToEnd(): void;
+};
+
+function makePlayer(c: CubeCase, opts: { viz: string; detail: boolean; set: CaseSet }): Player {
+  const p = document.createElement("twisty-player") as Player;
+  p.setAttribute("puzzle", "3x3x3");
+  p.setAttribute("alg", c.algs[opts.detail ? state.algIndex : 0] ?? c.algs[0]);
+  // The alg *ends* solved, so the player opens on the case itself.
+  p.setAttribute("experimental-setup-anchor", "end");
+  const setup = SETUP_ALG[state.cross];
+  if (setup) p.setAttribute("experimental-setup-alg", setup);
+  p.setAttribute("visualization", opts.viz);
+  p.setAttribute("background", "none");
+  p.setAttribute("control-panel", "none");
+  p.setAttribute("viewer-link", "none");
+  p.setAttribute("hint-facelets", "none");
+  // Must be assigned as a property — the attribute form is ignored.
+  p.experimentalStickeringMaskOrbits = stickeringMask(opts.set, state.cross);
+  return p;
+}
+
+// ---------------------------------------------------------------- render
+
+function renderSetNav() {
+  const nav = $("#setnav");
+  nav.replaceChildren();
+  for (const s of SET_ORDER) {
+    const b = el("button") as HTMLButtonElement;
+    b.setAttribute("aria-selected", String(state.set === s));
+    b.append(el("span", undefined, s), el("span", "count", String(SETS[s].length)));
+    b.onclick = () => {
+      state.set = s;
+      state.group = null;
+      state.selected = SETS[s][0].id;
+      state.algIndex = 0;
+      state.finder = emptyFinder();
+      renderAll();
+    };
+    nav.append(b);
+  }
+}
+
+function renderCrossToggle() {
+  const host = $("#crosstoggle");
+  host.replaceChildren();
+  host.title = "Which colour your cross is on";
+  for (const c of ["white", "yellow"] as Cross[]) {
+    const b = el("button", "cross-btn") as HTMLButtonElement;
+    b.setAttribute("aria-pressed", String(state.cross === c));
+    b.append(el("span", `swatch swatch-${c}`), el("span", undefined, c === "white" ? "White" : "Yellow"));
+    b.onclick = () => {
+      if (state.cross === c) return;
+      state.cross = c;
+      store("cross", c);
+      renderAll();
+    };
+    host.append(b);
+  }
+}
+
+// ---------------------------------------------------------------- finder options
+//
+// Each option carries the mini cube that shows what it means. The two "where is
+// it" questions light the position up in the accent colour rather than painting
+// real stickers, because a position says nothing about which way round the
+// piece sits — that is the next question, and it draws the real colours.
+
+type Opt = { v: number; label: string; icon: IconSpec };
+
+const cornerPosOpts = (): Opt[] =>
+  [
+    { v: 0, label: "Front-right" },
+    { v: 1, label: "Back-right" },
+    { v: 2, label: "Back-left" },
+    { v: 3, label: "Front-left" },
+    { v: 4, label: "In slot" },
+  ].map((o) => ({ ...o, icon: { cross: state.cross, spot: { kind: "corner", pos: o.v } } }));
+
+const cornerOriOpts = (): Opt[] => {
+  // Which face "orientation 1" lands on depends on where the corner is, so the
+  // label has to follow the answer above rather than always saying front-right.
+  const pos = state.finder.cornerPos ?? 0;
+  return [0, 1, 2].map((ori) => ({
+    v: ori,
+    label: pos === 4 && ori === 0 ? "Already solved" : "Facing " + FACE_WORD[crossFace(pos, ori)],
+    icon: { cross: state.cross, piece: { kind: "corner", pos, ori } },
+  }));
+};
+
+const edgePosOpts = (): Opt[] =>
+  [
+    { v: 0, label: "Front" },
+    { v: 1, label: "Right" },
+    { v: 2, label: "Back" },
+    { v: 3, label: "Left" },
+    { v: 8, label: "In slot" },
+  ].map((o) => ({ ...o, icon: { cross: state.cross, spot: { kind: "edge", pos: o.v } } }));
+
+const edgeOriOpts = (): Opt[] => {
+  const pos = state.finder.edgePos ?? 0;
+  return [
+    { v: 0, label: "Not flipped" },
+    { v: 1, label: "Flipped" },
+  ].map((o) => ({ ...o, icon: { cross: state.cross, piece: { kind: "edge", pos, ori: o.v } } }));
+};
+
+function optRow<K extends keyof Finder>(k: K, opts: Opt[], cols: number) {
+  const row = el("div", "opt-row");
+  row.style.setProperty("--cols", String(cols));
+  for (const o of opts) {
+    const b = el("button", "opt") as HTMLButtonElement;
+    b.setAttribute("aria-pressed", String(state.finder[k] === o.v));
+    b.append(cubeIcon(o.icon), el("span", "opt-label", o.label));
+    b.onclick = () => {
+      state.finder[k] = (state.finder[k] === o.v ? null : o.v) as Finder[K];
+      ensureSelectionVisible();
+      renderAll();
+    };
+    row.append(b);
+  }
+  return row;
+}
+
+function renderSidebar() {
+  const side = $("#sidebar");
+  side.replaceChildren();
+
+  if (state.set === "F2L") {
+    side.append(el("div", "side-title", "Find your case"));
+    const box = el("div", "finder");
+    box.append(
+      el(
+        "p",
+        undefined,
+        "Look at your cube and pick the picture that matches. Answer for the cube exactly as it sits — turning the top layer is free, so the finder lines it up with the diagrams for you.",
+      ),
+    );
+
+    const groups: [string, keyof Finder, Opt[], number][] = [
+      ["Corner is at", "cornerPos", cornerPosOpts(), 3],
+      ["Corner's cross sticker", "cornerOri", cornerOriOpts(), 3],
+      ["Edge is at", "edgePos", edgePosOpts(), 3],
+      ["Edge is", "edgeOri", edgeOriOpts(), 2],
+    ];
+    for (const [label, key, opts, cols] of groups) {
+      const g = el("div", "finder-group");
+      g.append(el("div", "finder-label", label), optRow(key, opts, cols));
+      box.append(g);
+    }
+
+    const reset = el("button", "finder-reset", "Clear finder") as HTMLButtonElement;
+    reset.onclick = () => {
+      state.finder = emptyFinder();
+      renderAll();
+    };
+    box.append(reset);
+    side.append(box);
+  }
+
+  const groups = [...new Set(SETS[state.set].map((c) => c.group))];
+  side.append(el("div", "side-title", state.set === "F2L" ? "Case type" : "Shape"));
+  const list = el("div", "chip-list");
+
+  const all = el("button", "chip") as HTMLButtonElement;
+  all.setAttribute("aria-pressed", String(state.group === null));
+  all.append(el("span", undefined, "All cases"), el("span", "n", String(SETS[state.set].length)));
+  all.onclick = () => {
+    state.group = null;
+    renderAll();
+  };
+  list.append(all);
+
+  for (const g of groups) {
+    const n = SETS[state.set].filter((c) => c.group === g).length;
+    const b = el("button", "chip") as HTMLButtonElement;
+    b.setAttribute("aria-pressed", String(state.group === g));
+    b.append(el("span", undefined, g), el("span", "n", String(n)));
+    b.onclick = () => {
+      state.group = state.group === g ? null : g;
+      renderAll();
+    };
+    list.append(b);
+  }
+  side.append(list);
+}
+
+/** Keep a case selected so the detail panel (and its player) stays on screen. */
+function ensureSelectionVisible() {
+  const visible = visibleCases();
+  if (!visible.length) return;
+  if (!visible.some((c) => c.id === state.selected)) {
+    state.selected = visible[0].id;
+    state.algIndex = 0;
+  }
+}
+
+function renderGrid() {
+  const grid = $("#grid");
+  const cases = visibleCases();
+  grid.replaceChildren();
+  cardElements.clear();
+
+  $("#grid-title").textContent = state.set;
+  $("#grid-count").textContent = `${cases.length} of ${SETS[state.set].length} cases · ${BLURB[state.set]}`;
+  ($("#empty") as HTMLElement).hidden = cases.length > 0;
+
+  // Cases are stored in their conventional numeric order, in which groups
+  // interleave (OLL 1-4 and 17-20 are all dots). Bucket them so each group
+  // heading appears exactly once.
+  const buckets = new Map<string, CubeCase[]>();
+  for (const c of cases) {
+    const b = buckets.get(c.group);
+    if (b) b.push(c);
+    else buckets.set(c.group, [c]);
+  }
+
+  let index = 0;
+  for (const [group, members] of buckets) {
+    if (!state.group) grid.append(el("div", "group-head", group));
+    for (const c of members) renderCard(c, grid, index++ < EAGER_THUMBS);
+  }
+}
+
+function renderCard(c: CubeCase, grid: HTMLElement, eager: boolean) {
+  const card = el("button", "case") as HTMLButtonElement;
+  card.setAttribute("aria-current", String(state.selected === c.id));
+  card.title = c.name;
+
+  const thumb = el("div", "thumb");
+  const set = state.set;
+  const mount = () => {
+    if (state.set !== set || thumb.childElementCount) return;
+    thumb.append(makePlayer(c, { viz: THUMB_VIZ[set], detail: false, set }));
+  };
+
+  const foot = el("div", "case-foot");
+  foot.append(
+    el("span", "case-label", state.set === "F2L" ? c.label : `${state.set} ${c.label}`),
+    el("span", "case-sub", `${moveCount(c.algs[0])}`),
+  );
+  card.append(thumb, foot);
+  card.onclick = () => {
+    state.selected = c.id;
+    state.algIndex = 0;
+    // Rebuilding the grid here would tear down and recreate every thumbnail
+    // player just to move a highlight, which exhausts the 3D renderer.
+    updateSelection();
+    renderDetail();
+    $("#detail").classList.add("open");
+  };
+  grid.append(card);
+  cardElements.set(c.id, card);
+
+  // Only now that the card is in the document: a TwistyPlayer observes itself for
+  // intersection from its constructor and never initialises if it is built inside
+  // a detached subtree, so it must be created after its container is attached.
+  if (eager) mount();
+  else {
+    lazyThumbs.set(thumb, mount);
+    thumbObserver.observe(thumb);
+  }
+}
+
+function updateSelection() {
+  for (const [id, card] of cardElements) {
+    card.setAttribute("aria-current", String(state.selected === id));
+  }
+}
+
+const ICONS = {
+  restart: `<path d="M12 5V2L7 6l5 4V7a5 5 0 1 1-5 5H5a7 7 0 1 0 7-7z" fill="currentColor"/>`,
+  prev: `<path d="M8 6h2.2v12H8zM19 6v12l-8-6z" fill="currentColor"/>`,
+  next: `<path d="M13.8 6H16v12h-2.2zM5 6l8 6-8 6z" fill="currentColor"/>`,
+  play: `<path d="M8 5l11 7-11 7z" fill="currentColor"/>`,
+  pause: `<path d="M7 5h3.4v14H7zM13.6 5H17v14h-3.4z" fill="currentColor"/>`,
+  end: `<path d="M6 5l9 7-9 7zM16.8 5H19v14h-2.2z" fill="currentColor"/>`,
+};
+const iconBtn = (path: string, label: string) => {
+  const b = el("button", "tbtn") as HTMLButtonElement;
+  b.title = label;
+  b.setAttribute("aria-label", label);
+  b.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true">${path}</svg>`;
+  return b;
+};
+
+/**
+ * A TwistyPlayer builds its 3D view exactly once, when a shared IntersectionObserver
+ * inside cubing.js first reports it on screen, and it guards that with a flag it
+ * never resets (upstream comment: "TODO: support resetting"). Detaching a player
+ * from the DOM therefore kills it permanently — re-inserting does not bring it back.
+ *
+ * So the detail panel is built once and then *updated in place*. The player is
+ * created during the initial render and never removed; only text, chips and the
+ * algorithm list are rebuilt when you pick a different case.
+ */
+type DetailShell = {
+  empty: HTMLElement;
+  inner: HTMLElement;
+  eyebrow: HTMLElement;
+  title: HTMLElement;
+  player: Player;
+  play: HTMLButtonElement;
+  scrub: HTMLInputElement;
+  chipRow: HTMLElement;
+  speed: HTMLInputElement;
+  speedOut: HTMLElement;
+  hint: HTMLElement;
+  algLabel: HTMLElement;
+  algList: HTMLElement;
+  chips: HTMLButtonElement[];
+};
+
+let shell: DetailShell | null = null;
+let moveStarts: Promise<number[]> = Promise.resolve([]);
+let playing = false;
+let atEnd = false;
+let timeRange = { start: 0, end: 1 };
+let scrubbing = false;
+
+const setScrubFill = (el: HTMLInputElement, fraction: number) =>
+  el.style.setProperty("--fill", `${Math.max(0, Math.min(100, fraction * 100))}%`);
+
+// ------------------------------------------------------------- chip seeking
+//
+// Clicking a move chip used to snap the cube straight to that point, which makes
+// everything you skipped invisible. Instead the timeline is driven by hand. The
+// neighbouring move plays at the tempo you picked; anything further away is
+// fast-forwarded up to the move before the one you clicked, which then plays at
+// the normal tempo — so the step that actually lands you there is still legible.
+
+/** Fast-forward is at least this much quicker than normal playback... */
+const FF_SCALE = 3;
+/** ...and never takes longer than this many milliseconds, however far it travels. */
+const FF_BUDGET = 700;
+
+let seekRaf: number | null = null;
+
+/** Abort a running seek. Every other transport control calls this first. */
+function cancelSeek() {
+  if (seekRaf !== null) cancelAnimationFrame(seekRaf);
+  seekRaf = null;
+}
+
+/** Index of the move the timeline is currently sitting on. */
+const currentMoveIndex = (list: number[], timestamp: number) => {
+  let i = 0;
+  for (let k = 0; k < list.length; k++) if (list[k] <= timestamp + 1) i = k;
+  return i;
+};
+
+/** One stretch of a seek: where it ends, and how fast to cover it. */
+type SeekLeg = { to: number; rate: number };
+
+/**
+ * Walk the timeline through `legs` instead of jumping to the end of them. `rate`
+ * is timeline-ms per real-ms — the same unit as the player's tempoScale, so a
+ * rate of `state.speed` is indistinguishable from ordinary playback.
+ */
+function seekAlong(p: Player, from: number, legs: SeekLeg[]) {
+  cancelSeek();
+  p.pause();
+  const runLeg = (index: number, start: number) => {
+    const leg = legs[index];
+    if (!leg) return void (seekRaf = null);
+    const span = leg.to - start;
+    if (!span) return runLeg(index + 1, start);
+    // Position is derived from the wall clock rather than accumulated per frame,
+    // so a slow device drops frames instead of dragging the seek out, and a tab
+    // that was hidden mid-seek simply arrives.
+    const duration = Math.abs(span) / leg.rate;
+    const started = performance.now();
+    const tick = (now: number) => {
+      const progress = Math.min(1, (now - started) / duration);
+      p.experimentalModel.timestampRequest.set(start + span * progress);
+      if (progress < 1) seekRaf = requestAnimationFrame(tick);
+      else runLeg(index + 1, leg.to);
+    };
+    seekRaf = requestAnimationFrame(tick);
+  };
+  runLeg(0, from);
+}
+
+/**
+ * What the player is currently showing. Requesting a timestamp — scrubbing, the
+ * step buttons, a move chip — leaves that request standing on the model, so a
+ * newly picked case would otherwise open part-way through its alg.
+ */
+let shownKey = "";
+
+/** Point the persistent player at a different case. */
+function configurePlayer(p: Player, c: CubeCase, set: CaseSet) {
+  cancelSeek();
+  // Attributes, not property assignment: the thumbnails are configured this way
+  // and render reliably, whereas assigning `alg` as a property does not.
+  p.setAttribute("alg", c.algs[state.algIndex] ?? c.algs[0]);
+  p.setAttribute("experimental-setup-anchor", "end");
+  const setup = SETUP_ALG[state.cross];
+  if (setup) p.setAttribute("experimental-setup-alg", setup);
+  else p.removeAttribute("experimental-setup-alg");
+  p.experimentalStickeringMaskOrbits = stickeringMask(set, state.cross);
+  p.tempoScale = state.speed;
+  moveStarts = p.experimentalModel.indexer
+    .get()
+    .then((indexer: any) =>
+      Array.from({ length: indexer.numAnimatedLeaves() }, (_, k) => indexer.indexToMoveStartTimestamp(k)),
+    );
+
+  // Rewind only when the player is pointed somewhere new: renderDetail() also runs
+  // on every search keystroke and filter click, which must not interrupt playback.
+  const key = `${set}/${c.id}/${state.algIndex}/${state.cross}`;
+  if (key === shownKey) return;
+  shownKey = key;
+  p.pause();
+  // jumpToStart() parks the timeline on the keyword "start" rather than a number,
+  // so it stays anchored even as the new alg's own length settles in.
+  p.jumpToStart();
+}
+
+function buildDetailShell(): DetailShell {
+  const host = $("#detail");
+  host.replaceChildren();
+
+  const empty = el("div", "detail-empty");
+  empty.append(
+    el("p", undefined, "Pick a case to see it in 3D."),
+    el(
+      "p",
+      undefined,
+      "Every algorithm here is verified against a cube model — all three sets are provably complete.",
+    ),
+  );
+  host.append(empty);
+
+  const inner = el("div", "detail-inner");
+  const close = el("button", "close-detail", "← Back to cases") as HTMLButtonElement;
+  close.onclick = () => host.classList.remove("open");
+  const eyebrow = el("div", "eyebrow");
+  const title = el("h2");
+  inner.append(close, eyebrow, title);
+
+  const wrap = el("div", "player-wrap");
+  inner.append(wrap);
+
+  const transport = el("div", "transport");
+  const bRestart = iconBtn(ICONS.restart, "Restart");
+  const bPrev = iconBtn(ICONS.prev, "Previous move");
+  const play = iconBtn(ICONS.play, "Play");
+  play.classList.add("tbtn-primary");
+  const bNext = iconBtn(ICONS.next, "Next move");
+  const bEnd = iconBtn(ICONS.end, "Jump to solved");
+  const scrub = el("input", "scrub") as HTMLInputElement;
+  scrub.type = "range";
+  scrub.min = "0";
+  scrub.max = "1000";
+  scrub.value = "0";
+  scrub.setAttribute("aria-label", "Scrub through the algorithm");
+  transport.append(bRestart, bPrev, play, bNext, bEnd, scrub);
+  inner.append(transport);
+
+  const chipRow = el("div", "chips");
+  inner.append(chipRow);
+
+  const optStrip = el("div", "opt-strip");
+  const speed = el("input", "speed") as HTMLInputElement;
+  speed.type = "range";
+  speed.min = "0.25";
+  speed.max = "3";
+  speed.step = "0.25";
+  speed.value = String(state.speed);
+  speed.setAttribute("aria-label", "Playback speed");
+  const speedOut = el("span", "speed-val", `${state.speed}×`);
+  const toggle = (label: string, onChange: (on: boolean) => void) => {
+    const l = el("label", "toggle");
+    const box = el("input") as HTMLInputElement;
+    box.type = "checkbox";
+    box.onchange = () => onChange(box.checked);
+    l.append(box, el("span", undefined, label));
+    return l;
+  };
+  optStrip.append(
+    el("span", "speed-label", "Speed"),
+    speed,
+    speedOut,
+    toggle("Hint stickers", (on) => shell?.player.setAttribute("hint-facelets", on ? "floating" : "none")),
+    toggle("Back view", (on) => shell?.player.setAttribute("back-view", on ? "top-right" : "none")),
+  );
+  inner.append(optStrip);
+
+  const hint = el("p", "detail-hint");
+  const algLabel = el("div", "section-label", "Algorithm");
+  const algList = el("div", "alg-list");
+  inner.append(hint, algLabel, algList);
+
+  host.append(inner);
+
+  // Created only now that its container is attached, during the first render.
+  const player = makePlayer(SETS[state.set][0], { viz: "3D", detail: true, set: state.set });
+  wrap.append(player);
+
+  const built: DetailShell = {
+    empty, inner, eyebrow, title, player, play, scrub, chipRow,
+    speed, speedOut, hint, algLabel, algList, chips: [],
+  };
+
+  speed.oninput = () => {
+    state.speed = Number(speed.value);
+    store("speed", state.speed);
+    player.tempoScale = state.speed;
+    speedOut.textContent = `${state.speed}×`;
+  };
+
+  bRestart.onclick = () => {
+    cancelSeek();
+    player.jumpToStart();
+  };
+  bEnd.onclick = () => {
+    cancelSeek();
+    player.jumpToEnd();
+  };
+  play.onclick = () => {
+    cancelSeek();
+    if (playing) return player.pause();
+    // Hitting play while parked on the solved state should replay the case.
+    if (atEnd) player.jumpToStart();
+    player.play();
+  };
+
+  const EPS = 1;
+  const step = async (delta: number) => {
+    cancelSeek();
+    const list = await moveStarts;
+    const info = await player.experimentalModel.detailedTimelineInfo.get();
+    player.pause();
+    if (delta > 0) {
+      const next = list.find((t) => t > info.timestamp + EPS);
+      if (next === undefined) player.jumpToEnd();
+      else player.experimentalModel.timestampRequest.set(next);
+    } else {
+      const before = list.filter((t) => t < info.timestamp - EPS);
+      if (!before.length) player.jumpToStart();
+      else player.experimentalModel.timestampRequest.set(before[before.length - 1]);
+    }
+  };
+  bPrev.onclick = () => void step(-1);
+  bNext.onclick = () => void step(1);
+
+  const seek = () => {
+    const fraction = Number(scrub.value) / 1000;
+    setScrubFill(scrub, fraction);
+    player.experimentalModel.timestampRequest.set(
+      timeRange.start + fraction * (timeRange.end - timeRange.start),
+    );
+  };
+  scrub.oninput = () => {
+    cancelSeek();
+    scrubbing = true;
+    player.pause();
+    seek();
+  };
+  scrub.onchange = () => {
+    seek();
+    scrubbing = false;
+  };
+
+  const model = player.experimentalModel;
+  model.playingInfo.addFreshListener((info: { playing: boolean }) => {
+    playing = info.playing;
+    play.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true">${playing ? ICONS.pause : ICONS.play}</svg>`;
+    play.title = playing ? "Pause" : "Play";
+    play.setAttribute("aria-label", playing ? "Pause" : "Play");
+  });
+
+  model.detailedTimelineInfo.addFreshListener(
+    (info: { timestamp: number; timeRange: { start: number; end: number }; atEnd: boolean }) => {
+      timeRange = info.timeRange;
+      atEnd = info.atEnd;
+      const span = timeRange.end - timeRange.start || 1;
+      const fraction = (info.timestamp - timeRange.start) / span;
+      if (!scrubbing) {
+        scrub.value = String(Math.round(fraction * 1000));
+        setScrubFill(scrub, fraction);
+      }
+      void moveStarts.then((list) => {
+        if (!built.chips.length) return;
+        const i = info.atEnd ? built.chips.length - 1 : currentMoveIndex(list, info.timestamp);
+        built.chips.forEach((chip, n) => chip.classList.toggle("current", n === i));
+      });
+    },
+  );
+
+  return built;
+}
+
+function renderDetail() {
+  shell ??= buildDetailShell();
+  const s = shell;
+  const c = SETS[state.set].find((x) => x.id === state.selected);
+
+  s.empty.hidden = !!c;
+  // The player must stay in the document, so the panel is hidden rather than removed.
+  s.inner.style.display = c ? "" : "none";
+  if (!c) return;
+
+  s.eyebrow.textContent = `${state.set} ${c.label}`;
+  s.title.textContent = c.name;
+  s.hint.textContent = c.hint ?? "";
+  s.hint.hidden = !c.hint;
+
+  const alg = c.algs[state.algIndex] ?? c.algs[0];
+  s.chipRow.replaceChildren();
+  s.chips = displayTokens(alg).map((m, i) => {
+    const chip = el("button", "chip-move", m) as HTMLButtonElement;
+    chip.title = `Play to move ${i + 1}`;
+    chip.onclick = async () => {
+      cancelSeek();
+      const list = await moveStarts;
+      const target = list[i] ?? 0;
+      const { timestamp } = await s.player.experimentalModel.detailedTimelineInfo.get();
+      const cur = currentMoveIndex(list, timestamp);
+      // A neighbouring chip is one ordinary move away, so just play it. Anything
+      // further away is fast-forwarded (or rewound) as far as the move that ends
+      // where you clicked, and that last move plays at the normal tempo.
+      if (Math.abs(i - cur) <= 1) return seekAlong(s.player, timestamp, [{ to: target, rate: state.speed }]);
+      const handoff = list[i > cur ? i - 1 : i + 1];
+      const rate = Math.max(state.speed * FF_SCALE, Math.abs(handoff - timestamp) / FF_BUDGET);
+      seekAlong(s.player, timestamp, [
+        { to: handoff, rate },
+        { to: target, rate: state.speed },
+      ]);
+    };
+    s.chipRow.append(chip);
+    return chip;
+  });
+
+  s.algLabel.textContent = c.algs.length > 1 ? "Algorithms" : "Algorithm";
+  s.algList.replaceChildren();
+  c.algs.forEach((a, i) => {
+    const row = el("button", "alg-block") as HTMLButtonElement;
+    row.setAttribute("aria-current", String(i === state.algIndex));
+    row.append(el("span", "alg-text", displayAlg(a)), el("span", "alg-meta", `${moveCount(a)} moves`));
+    const copy = el("button", "copy-btn", "Copy") as HTMLButtonElement;
+    copy.onclick = (ev) => {
+      ev.stopPropagation();
+      navigator.clipboard?.writeText(displayAlg(a));
+      copy.textContent = "Copied";
+      setTimeout(() => (copy.textContent = "Copy"), 1200);
+    };
+    row.append(copy);
+    row.onclick = () => {
+      state.algIndex = i;
+      renderDetail();
+    };
+    s.algList.append(row);
+  });
+
+  configurePlayer(s.player, c, state.set);
+}
+
+function renderAll() {
+  renderSetNav();
+  renderCrossToggle();
+  renderSidebar();
+  // The detail player is built before the grid: cubing.js initialises a player
+  // from a shared IntersectionObserver callback, and a large batch of thumbnails
+  // created in the same tick can starve the one created last.
+  renderDetail();
+  renderGrid();
+}
+
+// ---------------------------------------------------------------- events
+
+const search = $("#search") as HTMLInputElement;
+search.addEventListener("input", () => {
+  state.query = search.value;
+  ensureSelectionVisible();
+  renderGrid();
+  updateSelection();
+  renderDetail();
+});
+
+document.addEventListener("keydown", (e) => {
+  const typing = document.activeElement === search;
+  if (e.key === "/" && !typing) {
+    e.preventDefault();
+    search.focus();
+    search.select();
+  }
+  if (e.key === "Escape") {
+    if (typing && search.value) {
+      search.value = "";
+      state.query = "";
+      renderGrid();
+    } else {
+      $("#detail").classList.remove("open");
+    }
+  }
+  if (e.key === " " && !typing && state.selected) {
+    const btn = document.querySelector(".transport .tbtn-primary") as HTMLButtonElement | null;
+    if (btn) {
+      e.preventDefault();
+      btn.click();
+    }
+  }
+});
+
+renderAll();

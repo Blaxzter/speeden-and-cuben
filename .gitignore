@@ -1,0 +1,12 @@
+node_modules/
+dist/
+.wrangler/
+
+.playwright-mcp/
+*.png
+
+# local env files — the operator details behind the Impressum/Datenschutz pages
+# live here; never commit real values. The committed template is .env.example.
+.env
+.env.*
+!.env.example
