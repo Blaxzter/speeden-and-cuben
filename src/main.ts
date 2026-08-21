@@ -87,13 +87,31 @@ function store(key: string, value: unknown) {
   }
 }
 
+/**
+ * Playback speed bounds, shared by the slider and by the clamp below.
+ *
+ * The player multiplies elapsed real time by this to advance its timeline, and
+ * it does not sanity-check the multiplier: a non-finite tempo turns every
+ * computed timestamp into NaN, which compares false against both ends of the
+ * timeline, so the animation stops advancing while the player still reports
+ * itself as playing. Nothing short of a reload recovers from that, so a value
+ * arriving from storage is clamped rather than trusted.
+ */
+const SPEED_MIN = 0.25;
+const SPEED_MAX = 3;
+const SPEED_STEP = 0.25;
+const clampSpeed = (v: unknown) => {
+  const n = Number(v);
+  return Number.isFinite(n) ? Math.min(SPEED_MAX, Math.max(SPEED_MIN, n)) : 1;
+};
+
 const state = {
   set: "F2L" as CaseSet,
   query: "",
   group: null as string | null,
   selected: F2L_CASES[0].id as string | null,
   algIndex: 0,
-  speed: stored<number>("speed", 1),
+  speed: clampSpeed(stored<number>("speed", 1)),
   cross: stored<Cross>("cross", "white"),
   finder: emptyFinder(),
 };
@@ -482,6 +500,50 @@ const iconBtn = (path: string, label: string) => {
   return b;
 };
 
+// ------------------------------------------------------------- option icons
+//
+// "Hint stickers" and "Back view" both describe something the cube *looks like*
+// once they are on, which a word can only approximate. Each toggle therefore
+// draws its own answer, in the same isometric projection the finder icons use
+// so that a cube reads as the same cube everywhere in the app.
+
+/** Isometric projection of a unit cube, centred on (cx, cy) with radius `s`. */
+const isoCube = (cx: number, cy: number, s: number) => {
+  const at = (x: number, y: number) => `${(cx + x * s).toFixed(2)},${(cy + y * s).toFixed(2)}`;
+  const top = at(0, -1);
+  const upRight = at(0.866, -0.5);
+  const downRight = at(0.866, 0.5);
+  const bottom = at(0, 1);
+  const downLeft = at(-0.866, 0.5);
+  const upLeft = at(-0.866, -0.5);
+  const middle = at(0, 0);
+  // The faces are filled with currentColor at three opacities: a flat fill would
+  // read as a hexagon, and inheriting the colour lets the button tint the whole
+  // diagram when it is pressed.
+  return (
+    `<polygon points="${top} ${upRight} ${middle} ${upLeft}" fill="currentColor"/>` +
+    `<polygon points="${middle} ${upRight} ${downRight} ${bottom}" fill="currentColor" opacity=".72"/>` +
+    `<polygon points="${upLeft} ${middle} ${bottom} ${downLeft}" fill="currentColor" opacity=".45"/>`
+  );
+};
+
+/** One floating hint sticker: a face's rhombus, lifted clear of the cube. */
+const ghostSticker = (cx: number, cy: number, s: number) => {
+  const at = (x: number, y: number) => `${(cx + x * s).toFixed(2)},${(cy + y * s).toFixed(2)}`;
+  return (
+    `<polygon points="${at(0, -0.5)} ${at(0.866, 0)} ${at(0, 0.5)} ${at(-0.866, 0)}" ` +
+    `fill="currentColor" opacity=".42"/>`
+  );
+};
+
+const OPT_ICONS = {
+  // Stickers off the faces you cannot see, hovering just clear of the cube —
+  // which is what the player's "floating" hint facelets actually look like.
+  hint: isoCube(11.5, 14.2, 6.6) + ghostSticker(4.9, 7.5, 4.1) + ghostSticker(18.6, 8.3, 4.1),
+  // A second, smaller cube parked in the corner, where the back view goes.
+  back: isoCube(9.6, 14.4, 6.8) + isoCube(18.1, 6.4, 4.2),
+};
+
 /**
  * A TwistyPlayer builds its 3D view exactly once, when a shared IntersectionObserver
  * inside cubing.js first reports it on screen, and it guards that with a flag it
@@ -511,13 +573,16 @@ type DetailShell = {
 
 let shell: DetailShell | null = null;
 let moveStarts: Promise<number[]> = Promise.resolve([]);
-let playing = false;
-let atEnd = false;
 let timeRange = { start: 0, end: 1 };
 let scrubbing = false;
 
-const setScrubFill = (el: HTMLInputElement, fraction: number) =>
-  el.style.setProperty("--fill", `${Math.max(0, Math.min(100, fraction * 100))}%`);
+/** Paint a range input's accent fill up to wherever its thumb currently sits. */
+const paintRange = (input: HTMLInputElement) => {
+  const min = Number(input.min);
+  const max = Number(input.max);
+  const fraction = max > min ? (Number(input.value) - min) / (max - min) : 0;
+  input.style.setProperty("--fill", `${Math.max(0, Math.min(100, fraction * 100))}%`);
+};
 
 // ------------------------------------------------------------- chip seeking
 //
@@ -533,11 +598,19 @@ const FF_SCALE = 3;
 const FF_BUDGET = 700;
 
 let seekRaf: number | null = null;
+/** Bumped by every transport command, so a slower one can tell it was superseded. */
+let transportSeq = 0;
 
-/** Abort a running seek. Every other transport control calls this first. */
+/**
+ * Abort a running seek, and invalidate any transport command still waiting on a
+ * promise. Every transport control calls this first, so the token it returns
+ * also tells the slower handlers — `step`, a move chip — that a newer command
+ * has arrived and they must stop before touching the player.
+ */
 function cancelSeek() {
   if (seekRaf !== null) cancelAnimationFrame(seekRaf);
   seekRaf = null;
+  return ++transportSeq;
 }
 
 /** Index of the move the timeline is currently sitting on. */
@@ -647,6 +720,17 @@ function buildDetailShell(): DetailShell {
   play.classList.add("tbtn-primary");
   const bNext = iconBtn(ICONS.next, "Next move");
   const bEnd = iconBtn(ICONS.end, "Jump to solved");
+  /**
+   * The button's face, painted from what we just asked the player to do and then
+   * corrected by the player itself. Waiting for the player to answer would leave
+   * the icon lagging behind the click, because it batches its notifications to
+   * the end of the tick — and a background tab stretches that tick out.
+   */
+  const paintPlay = (isPlaying: boolean) => {
+    play.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true">${isPlaying ? ICONS.pause : ICONS.play}</svg>`;
+    play.title = isPlaying ? "Pause" : "Play";
+    play.setAttribute("aria-label", isPlaying ? "Pause" : "Play");
+  };
   const scrub = el("input", "scrub") as HTMLInputElement;
   scrub.type = "range";
   scrub.min = "0";
@@ -660,29 +744,43 @@ function buildDetailShell(): DetailShell {
   inner.append(chipRow);
 
   const optStrip = el("div", "opt-strip");
+  const speedGroup = el("div", "opt-speed");
   const speed = el("input", "speed") as HTMLInputElement;
   speed.type = "range";
-  speed.min = "0.25";
-  speed.max = "3";
-  speed.step = "0.25";
+  speed.min = String(SPEED_MIN);
+  speed.max = String(SPEED_MAX);
+  speed.step = String(SPEED_STEP);
   speed.value = String(state.speed);
   speed.setAttribute("aria-label", "Playback speed");
   const speedOut = el("span", "speed-val", `${state.speed}×`);
-  const toggle = (label: string, onChange: (on: boolean) => void) => {
-    const l = el("label", "toggle");
-    const box = el("input") as HTMLInputElement;
-    box.type = "checkbox";
-    box.onchange = () => onChange(box.checked);
-    l.append(box, el("span", undefined, label));
-    return l;
+  // The track is filled from the JS side, so it has to be painted once up front
+  // as well — the stored speed is rarely the one the stylesheet would guess.
+  paintRange(speed);
+  speedGroup.append(el("span", "speed-label", "Speed"), speed, speedOut);
+
+  const toggle = (label: string, icon: string, onChange: (on: boolean) => void) => {
+    const b = el("button", "opt-toggle") as HTMLButtonElement;
+    b.type = "button";
+    b.setAttribute("aria-pressed", "false");
+    b.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true">${icon}</svg>`;
+    b.append(el("span", undefined, label));
+    b.onclick = () => {
+      const on = b.getAttribute("aria-pressed") !== "true";
+      b.setAttribute("aria-pressed", String(on));
+      onChange(on);
+    };
+    return b;
   };
-  optStrip.append(
-    el("span", "speed-label", "Speed"),
-    speed,
-    speedOut,
-    toggle("Hint stickers", (on) => shell?.player.setAttribute("hint-facelets", on ? "floating" : "none")),
-    toggle("Back view", (on) => shell?.player.setAttribute("back-view", on ? "top-right" : "none")),
+  const toggles = el("div", "opt-toggles");
+  toggles.append(
+    toggle("Hint stickers", OPT_ICONS.hint, (on) =>
+      shell?.player.setAttribute("hint-facelets", on ? "floating" : "none"),
+    ),
+    toggle("Back view", OPT_ICONS.back, (on) =>
+      shell?.player.setAttribute("back-view", on ? "top-right" : "none"),
+    ),
   );
+  optStrip.append(speedGroup, toggles);
   inner.append(optStrip);
 
   const hint = el("p", "detail-hint");
@@ -702,10 +800,11 @@ function buildDetailShell(): DetailShell {
   };
 
   speed.oninput = () => {
-    state.speed = Number(speed.value);
+    state.speed = clampSpeed(speed.value);
     store("speed", state.speed);
     player.tempoScale = state.speed;
     speedOut.textContent = `${state.speed}×`;
+    paintRange(speed);
   };
 
   bRestart.onclick = () => {
@@ -716,19 +815,42 @@ function buildDetailShell(): DetailShell {
     cancelSeek();
     player.jumpToEnd();
   };
-  play.onclick = () => {
-    cancelSeek();
-    if (playing) return player.pause();
+  /**
+   * Whether the cube is playing is read back from the player on every click,
+   * never from a copy kept on this side.
+   *
+   * The player only notifies a listener when the value it is handed differs from
+   * the one that listener last saw, and it batches the notification to the end of
+   * the tick — so a burst of transport commands that settles back on the value
+   * already delivered produces no notification at all. A cached flag can miss a
+   * transition permanently that way, and this button used to do exactly that:
+   * once its copy said "playing" while the player was paused, every further
+   * click asked an already-paused player to pause, which changes nothing and so
+   * notifies nobody. The button stayed stuck until the page was reloaded.
+   */
+  play.onclick = async () => {
+    const seq = cancelSeek();
+    const model = player.experimentalModel;
+    const { playing } = await model.playingInfo.get();
+    if (seq !== transportSeq) return;
+    if (playing) {
+      player.pause();
+      return paintPlay(false);
+    }
     // Hitting play while parked on the solved state should replay the case.
+    const { atEnd } = await model.detailedTimelineInfo.get();
+    if (seq !== transportSeq) return;
     if (atEnd) player.jumpToStart();
     player.play();
+    paintPlay(true);
   };
 
   const EPS = 1;
   const step = async (delta: number) => {
-    cancelSeek();
+    const seq = cancelSeek();
     const list = await moveStarts;
     const info = await player.experimentalModel.detailedTimelineInfo.get();
+    if (seq !== transportSeq) return;
     player.pause();
     if (delta > 0) {
       const next = list.find((t) => t > info.timestamp + EPS);
@@ -745,7 +867,7 @@ function buildDetailShell(): DetailShell {
 
   const seek = () => {
     const fraction = Number(scrub.value) / 1000;
-    setScrubFill(scrub, fraction);
+    paintRange(scrub);
     player.experimentalModel.timestampRequest.set(
       timeRange.start + fraction * (timeRange.end - timeRange.start),
     );
@@ -762,22 +884,18 @@ function buildDetailShell(): DetailShell {
   };
 
   const model = player.experimentalModel;
-  model.playingInfo.addFreshListener((info: { playing: boolean }) => {
-    playing = info.playing;
-    play.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true">${playing ? ICONS.pause : ICONS.play}</svg>`;
-    play.title = playing ? "Pause" : "Play";
-    play.setAttribute("aria-label", playing ? "Pause" : "Play");
-  });
+  // Presentation only — what the button *does* is decided by reading the player
+  // back, so a notification this listener never receives cannot wedge anything.
+  model.playingInfo.addFreshListener((info: { playing: boolean }) => paintPlay(info.playing));
 
   model.detailedTimelineInfo.addFreshListener(
     (info: { timestamp: number; timeRange: { start: number; end: number }; atEnd: boolean }) => {
       timeRange = info.timeRange;
-      atEnd = info.atEnd;
       const span = timeRange.end - timeRange.start || 1;
       const fraction = (info.timestamp - timeRange.start) / span;
       if (!scrubbing) {
         scrub.value = String(Math.round(fraction * 1000));
-        setScrubFill(scrub, fraction);
+        paintRange(scrub);
       }
       void moveStarts.then((list) => {
         if (!built.chips.length) return;
@@ -811,10 +929,11 @@ function renderDetail() {
     const chip = el("button", "chip-move", m) as HTMLButtonElement;
     chip.title = `Play to move ${i + 1}`;
     chip.onclick = async () => {
-      cancelSeek();
+      const seq = cancelSeek();
       const list = await moveStarts;
       const target = list[i] ?? 0;
       const { timestamp } = await s.player.experimentalModel.detailedTimelineInfo.get();
+      if (seq !== transportSeq) return;
       const cur = currentMoveIndex(list, timestamp);
       // A neighbouring chip is one ordinary move away, so just play it. Anything
       // further away is fast-forwarded (or rewound) as far as the move that ends
