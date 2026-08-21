@@ -13,6 +13,9 @@
   --blue: #4f8cff;
   --radius: 14px;
   --radius-sm: 9px;
+  --scroll-thumb: rgba(154, 163, 180, 0.22);
+  --scroll-thumb-hover: rgba(154, 163, 180, 0.4);
+  --scroll-thumb-active: rgba(245, 197, 24, 0.55);
   color-scheme: dark;
 }
 
@@ -43,6 +46,55 @@ body {
 
 .muted {
   color: var(--text-dim);
+}
+
+/* ---------- scrollbars ---------- */
+
+/* Chromium/WebKit ignore ::-webkit-scrollbar as soon as scrollbar-width or
+   scrollbar-color are set, so the standard properties are scoped to Firefox
+   in the @supports block below. */
+
+::-webkit-scrollbar {
+  width: 12px;
+  height: 12px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  min-height: 40px;
+  border: 3px solid transparent;
+  border-radius: 999px;
+  background: var(--scroll-thumb);
+  background-clip: padding-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--scroll-thumb-hover);
+  background-clip: padding-box;
+}
+
+::-webkit-scrollbar-thumb:active {
+  background: var(--scroll-thumb-active);
+  background-clip: padding-box;
+}
+
+/* no stepper arrows at the ends of the track */
+::-webkit-scrollbar-button {
+  display: none;
+}
+
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+@supports not selector(::-webkit-scrollbar) {
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--scroll-thumb) transparent;
+  }
 }
 
 /* ---------- top bar ---------- */
