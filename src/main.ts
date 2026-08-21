@@ -338,12 +338,50 @@ function optRow<K extends keyof Finder>(k: K, opts: Opt[], cols: number) {
   return row;
 }
 
+/** How many filters the user has actually set — what the collapsed bar reports. */
+function activeFilterCount() {
+  const answered = state.set === "F2L" ? Object.values(state.finder).filter((v) => v !== null).length : 0;
+  return answered + (state.group === null ? 0 : 1);
+}
+
+const isPhone = () => window.matchMedia("(max-width: 760px)").matches;
+
+/** Picking a group is one decision, so on a phone it hands the screen back. */
+function collapseOnPhone() {
+  if (isPhone()) $("#sidebar").classList.remove("open");
+}
+
 function renderSidebar() {
   const side = $("#sidebar");
   side.replaceChildren();
 
+  // The finder is four picture questions tall. Left open above the grid on a
+  // phone it swallows the screen and leaves barely one row of cases in view,
+  // so there it collapses behind this bar and opens over the grid on demand.
+  // Wider layouts hide the bar and keep the column open, as before.
+  const toggle = el("button", "side-toggle") as HTMLButtonElement;
+  const answers = activeFilterCount();
+  side.classList.toggle("filtered", answers > 0);
+  toggle.setAttribute("aria-controls", "side-body");
+  toggle.setAttribute("aria-expanded", String(side.classList.contains("open")));
+  toggle.append(el("span", undefined, state.set === "F2L" ? "Find your case" : "Filter cases"));
+  if (answers > 0) toggle.append(el("span", "side-toggle-count", `${answers} active`));
+  const chevron = el("span", "side-toggle-chevron");
+  chevron.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9.5 12 15.5 18 9.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+  toggle.append(chevron);
+  toggle.onclick = () => {
+    toggle.setAttribute("aria-expanded", String(side.classList.toggle("open")));
+  };
+  side.append(toggle);
+
+  const body = el("div", "side-body");
+  body.id = "side-body";
+  side.append(body);
+
   if (state.set === "F2L") {
-    side.append(el("div", "side-title", "Find your case"));
+    // Redundant on a phone, where the collapse bar already says it — hidden
+    // there by CSS rather than by not rendering it, so a resize needs no rerun.
+    body.append(el("div", "side-title finder-title", "Find your case"));
     const box = el("div", "finder");
     box.append(
       el(
@@ -371,11 +409,11 @@ function renderSidebar() {
       renderAll();
     };
     box.append(reset);
-    side.append(box);
+    body.append(box);
   }
 
   const groups = [...new Set(SETS[state.set].map((c) => c.group))];
-  side.append(el("div", "side-title", state.set === "F2L" ? "Case type" : "Shape"));
+  body.append(el("div", "side-title", state.set === "F2L" ? "Case type" : "Shape"));
   const list = el("div", "chip-list");
 
   const all = el("button", "chip") as HTMLButtonElement;
@@ -383,6 +421,7 @@ function renderSidebar() {
   all.append(el("span", undefined, "All cases"), el("span", "n", String(SETS[state.set].length)));
   all.onclick = () => {
     state.group = null;
+    collapseOnPhone();
     renderAll();
   };
   list.append(all);
@@ -394,11 +433,12 @@ function renderSidebar() {
     b.append(el("span", undefined, g), el("span", "n", String(n)));
     b.onclick = () => {
       state.group = state.group === g ? null : g;
+      collapseOnPhone();
       renderAll();
     };
     list.append(b);
   }
-  side.append(list);
+  body.append(list);
 }
 
 /** Keep a case selected so the detail panel (and its player) stays on screen. */
@@ -1010,6 +1050,7 @@ document.addEventListener("keydown", (e) => {
       renderGrid();
     } else {
       $("#detail").classList.remove("open");
+      $("#sidebar").classList.remove("open");
     }
   }
   if (e.key === " " && !typing && state.selected) {
