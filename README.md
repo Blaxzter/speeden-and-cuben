@@ -46,12 +46,19 @@ from `VITE_LEGAL_*` build-time env vars; copy `.env.example` to a (gitignored)
 and a visible draft notice, so an unconfigured build can't quietly ship a broken
 Impressum.
 
-In CI the same values come from **GitHub Actions secrets** instead — Vite exposes
-any `VITE_`-prefixed process env var and gives it priority over the `.env` files,
-so nothing in the code has to know the difference. Forks and pull requests, which
-cannot read secrets, still build green (with placeholders); the deploy is gated on
-a check that fails if any placeholder made it into `dist/`, so a build missing the
-secrets can never reach the live site.
+On Cloudflare the same values come from the **Workers Builds environment**
+instead — Vite exposes any `VITE_`-prefixed process env var and gives it priority
+over the `.env` files, so nothing in the code has to know where they came from.
+They are stored only there and in your local `.env.local`; deliberately **not** in
+GitHub, so a repo clone never carries them.
+
+`pnpm check:legal` is the safety net. When the env vars are set the `||` fallbacks
+in `legal-info.ts` become dead code and the bundler folds them away, so finding a
+`[PLACEHOLDER]` in `dist/` proves the build environment was not configured. It
+runs in both deploy paths (`pnpm deploy` and `pnpm ci:build`) and fails the build
+rather than publishing an Impressum that reads `[YOUR FULL NAME]`. A plain
+`pnpm build` skips it on purpose, so a contributor without the values can still
+build — the pages then say so in a visible draft notice.
 
 The privacy policy itself lives in `src/legal/datenschutz.generated.html` — paste
 generator output straight in; `{{NAME}}` / `{{STREET}}` / `{{CITY}}` /
@@ -74,14 +81,22 @@ cp .env.example .env.local && $EDITOR .env.local   # first time only
 pnpm deploy
 ```
 
-Pushing to `main` does the same thing via `.github/workflows/deploy.yml`, which
-needs these repository secrets:
+Pushing to `main` deploys on its own: the repository is connected to
+**Workers Builds**, which watches it and runs the build itself. There is no
+GitHub Actions workflow and no CI credential to rotate — Cloudflare already
+holds the connection, so nothing about deploying lives in this repo.
 
-| Secret | Purpose |
+Its build settings (Workers → `speeden-and-cuben` → Settings → Build):
+
+| Setting | Value |
 | --- | --- |
-| `VITE_LEGAL_NAME` / `_STREET` / `_CITY` / `_COUNTRY` / `_EMAIL` / `_PHONE` | Operator details baked into the legal pages |
-| `CLOUDFLARE_ACCOUNT_ID` | Target account |
-| `CLOUDFLARE_API_TOKEN` | Deploy credential — create one with the *Edit Cloudflare Workers* template at <https://dash.cloudflare.com/profile/api-tokens> |
+| Build command | `pnpm run ci:build` |
+| Deploy command | `npx wrangler deploy` |
+| Variables and Secrets | `VITE_LEGAL_NAME` / `_STREET` / `_CITY` / `_COUNTRY` / `_EMAIL` / `_PHONE` |
+
+`ci:build` is `pnpm verify && pnpm build && pnpm check:legal` — so every deploy
+re-derives all 119 algorithms against a real cube model *and* refuses to publish
+placeholder operator details.
 
 Live at <https://speeden-and-cuben.fabraham.dev>.
 

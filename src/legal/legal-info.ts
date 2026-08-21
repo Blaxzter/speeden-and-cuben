@@ -4,8 +4,12 @@
  * These are injected at BUILD time from environment variables so the real
  * name / address / contact never live in the (public) git repo or its history.
  *  - Locally: put them in a gitignored `.env.local` (see `.env.example`).
- *  - On deploy: the same `.env.local` is read by `pnpm build`, which runs
- *    before `wrangler deploy`.
+ *  - On deploy: Workers Builds injects them from its own environment. Vite
+ *    exposes any VITE_-prefixed process env var and gives it priority over the
+ *    .env files, so the same code path serves both.
+ *
+ * `pnpm check:legal` fails the build if the placeholders below survive into
+ * dist/, so a misconfigured environment cannot publish a broken Impressum.
  *
  * IMPORTANT: an Impressum is legally required to be PUBLICLY VISIBLE, so these
  * values still appear on the deployed page (and in the shipped JS bundle). This

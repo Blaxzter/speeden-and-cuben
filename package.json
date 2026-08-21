@@ -9,8 +9,10 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "verify": "tsx scripts/verify-algs.ts",
-    "deploy": "pnpm build && wrangler deploy",
-    "fix-rotations": "tsx scripts/fix-rotations.ts"
+    "deploy": "pnpm build && pnpm check:legal && wrangler deploy",
+    "fix-rotations": "tsx scripts/fix-rotations.ts",
+    "check:legal": "tsx scripts/check-legal-info.ts",
+    "ci:build": "pnpm verify && pnpm build && pnpm check:legal"
   },
   "dependencies": {
     "cubing": "^0.63.3"
