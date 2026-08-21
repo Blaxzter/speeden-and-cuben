@@ -46,6 +46,13 @@ from `VITE_LEGAL_*` build-time env vars; copy `.env.example` to a (gitignored)
 and a visible draft notice, so an unconfigured build can't quietly ship a broken
 Impressum.
 
+In CI the same values come from **GitHub Actions secrets** instead — Vite exposes
+any `VITE_`-prefixed process env var and gives it priority over the `.env` files,
+so nothing in the code has to know the difference. Forks and pull requests, which
+cannot read secrets, still build green (with placeholders); the deploy is gated on
+a check that fails if any placeholder made it into `dist/`, so a build missing the
+secrets can never reach the live site.
+
 The privacy policy itself lives in `src/legal/datenschutz.generated.html` — paste
 generator output straight in; `{{NAME}}` / `{{STREET}}` / `{{CITY}}` /
 `{{COUNTRY}}` / `{{EMAIL}}` / `{{PHONE}}` tokens are substituted at runtime from
@@ -66,6 +73,15 @@ npx wrangler login   # first time only
 cp .env.example .env.local && $EDITOR .env.local   # first time only
 pnpm deploy
 ```
+
+Pushing to `main` does the same thing via `.github/workflows/deploy.yml`, which
+needs these repository secrets:
+
+| Secret | Purpose |
+| --- | --- |
+| `VITE_LEGAL_NAME` / `_STREET` / `_CITY` / `_COUNTRY` / `_EMAIL` / `_PHONE` | Operator details baked into the legal pages |
+| `CLOUDFLARE_ACCOUNT_ID` | Target account |
+| `CLOUDFLARE_API_TOKEN` | Deploy credential — create one with the *Edit Cloudflare Workers* template at <https://dash.cloudflare.com/profile/api-tokens> |
 
 Live at <https://speeden-and-cuben.fabraham.dev>.
 

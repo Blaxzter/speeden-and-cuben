@@ -1,0 +1,84 @@
+name: Build & deploy
+
+# The operator details behind /impressum and /datenschutz are deliberately not
+# in this repository. They live in GitHub Actions secrets and are injected into
+# the build below, exactly the way a local .env.local is — Vite exposes any
+# VITE_-prefixed process env var to import.meta.env, and gives it priority over
+# the .env files.
+#
+# When the secrets are absent (a fork, or a pull request from one, which cannot
+# read them) the build still succeeds: legal-info.ts falls back to visible
+# [PLACEHOLDER] values and renders a draft notice. Only the deploy is gated, so
+# a build without them can never reach the live site — see "Guard" below.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# Never let two deploys race to the same Worker.
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    # The `secrets` context is NOT available in a step-level `if:` — only `env`
+    # is. Lifting the token to job-level env is what makes the deploy step
+    # skippable rather than a hard failure when it is not configured.
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: pnpm/action-setup@v4 # version comes from packageManager in package.json
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # Re-derives every F2L/OLL/PLL case against a real cube model. Cheap, and
+      # it is the check that makes the algorithm data trustworthy.
+      - name: Verify algorithms
+        run: pnpm verify
+
+      - name: Build
+        run: pnpm build
+        env:
+          VITE_LEGAL_NAME: ${{ secrets.VITE_LEGAL_NAME }}
+          VITE_LEGAL_STREET: ${{ secrets.VITE_LEGAL_STREET }}
+          VITE_LEGAL_CITY: ${{ secrets.VITE_LEGAL_CITY }}
+          VITE_LEGAL_COUNTRY: ${{ secrets.VITE_LEGAL_COUNTRY }}
+          VITE_LEGAL_EMAIL: ${{ secrets.VITE_LEGAL_EMAIL }}
+          VITE_LEGAL_PHONE: ${{ secrets.VITE_LEGAL_PHONE }}
+
+      # Guard: an Impressum reading "[YOUR FULL NAME]" is worse than no deploy.
+      # When the env vars are set the `||` fallbacks become dead code and the
+      # bundler folds them away entirely — so finding one in dist/ is a reliable
+      # signal that the secrets did not arrive.
+      - name: Guard against shipping a placeholder Impressum
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          if grep -rqE "YOUR FULL NAME|STREET AND HOUSE NUMBER|YOUR-EMAIL" dist/; then
+            echo "::error::Built with placeholder operator details — the VITE_LEGAL_* secrets are missing or empty. Refusing to deploy."
+            exit 1
+          fi
+          echo "Operator details baked in."
+
+      # Uses the wrangler pinned in the lockfile rather than a second install
+      # from cloudflare/wrangler-action. dist/ is already built above, so
+      # `deploy` only uploads it.
+      - name: Deploy to Cloudflare
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && env.CLOUDFLARE_API_TOKEN != ''
+        run: pnpm exec wrangler deploy
