@@ -15,6 +15,8 @@
     "ci:build": "pnpm verify && pnpm build && pnpm check:legal"
   },
   "dependencies": {
+    "@fontsource-variable/inter": "^5.3.0",
+    "@fontsource-variable/jetbrains-mono": "^5.3.0",
     "cubing": "^0.63.3"
   },
   "devDependencies": {
