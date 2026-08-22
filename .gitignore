@@ -3,7 +3,9 @@ dist/
 .wrangler/
 
 .playwright-mcp/
+# Stray screenshots, but not the link-preview card -- that one ships.
 *.png
+!public/og.png
 
 # local env files — the operator details behind the Impressum/Datenschutz pages
 # live here; never commit real values. The committed template is .env.example.
