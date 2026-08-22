@@ -1036,6 +1036,63 @@ search.addEventListener("input", () => {
   renderDetail();
 });
 
+// ---------------------------------------------------------------- support
+
+/**
+ * The title bar's support affordance: one coffee icon opening a card that
+ * carries both ways to chip in, so the bar spends a single slot rather than
+ * letting two links compete for it.
+ *
+ * The card is anchored to the button in CSS rather than positioned against the
+ * viewport, which the topbar allows because it never scrolls -- it is a fixed
+ * row of the #app flex column. A resize can still move the button out from
+ * under it, so that closes it.
+ */
+const SUPPORT_CARD_W = 268;
+
+const supportBtn = $<HTMLButtonElement>("#supportbtn");
+const supportCard = $("#supportcard");
+
+/**
+ * Right-align the card to the button, then clamp it into the viewport. The bar
+ * wraps differently at every width and the button moves with it, so a card
+ * anchored to the button in CSS alone hangs off an edge as soon as the button
+ * is within a card's width of one -- which on a phone it always is.
+ */
+function placeSupportCard() {
+  const b = supportBtn.getBoundingClientRect();
+  const left = Math.min(b.right - SUPPORT_CARD_W, window.innerWidth - SUPPORT_CARD_W - 8);
+  supportCard.style.left = `${Math.max(8, left)}px`;
+  supportCard.style.top = `${b.bottom + 9}px`;
+}
+
+function setSupportOpen(open: boolean) {
+  if (open) placeSupportCard();
+  supportCard.hidden = !open;
+  supportBtn.setAttribute("aria-expanded", String(open));
+}
+
+supportBtn.onclick = () => setSupportOpen(supportCard.hidden);
+
+// Capture phase: the grid and the finder both stop propagation on their own
+// pointer handlers, and a click on either should still shut the card.
+document.addEventListener(
+  "pointerdown",
+  (e) => {
+    if (supportCard.hidden) return;
+    const t = e.target as Node;
+    if (supportCard.contains(t) || supportBtn.contains(t)) return;
+    setSupportOpen(false);
+  },
+  true,
+);
+
+// Follow the button rather than close. On a phone the URL bar sliding away
+// fires resize, and a card that dismissed itself mid-scroll would read as a bug.
+window.addEventListener("resize", () => {
+  if (!supportCard.hidden) placeSupportCard();
+});
+
 document.addEventListener("keydown", (e) => {
   const typing = document.activeElement === search;
   if (e.key === "/" && !typing) {
@@ -1044,7 +1101,10 @@ document.addEventListener("keydown", (e) => {
     search.select();
   }
   if (e.key === "Escape") {
-    if (typing && search.value) {
+    // Whatever is topmost wins, so the card needs no key of its own.
+    if (!supportCard.hidden) {
+      setSupportOpen(false);
+    } else if (typing && search.value) {
       search.value = "";
       state.query = "";
       renderGrid();

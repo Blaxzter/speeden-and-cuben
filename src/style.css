@@ -219,6 +219,133 @@ body {
   pointer-events: none;
 }
 
+/* ---------- support popover ---------- */
+
+/* One icon in the bar, two ways to chip in behind it -- the title bar has no
+   room for a pair of links, and neither deserves to be the one that shows. */
+.support {
+  flex: 0 0 auto;
+}
+
+.support-btn {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  appearance: none;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.support-btn svg {
+  width: 17px;
+  height: 17px;
+}
+
+.support-btn:hover {
+  background: var(--bg-card-hover);
+  color: var(--text);
+}
+
+.support-btn[aria-expanded="true"] {
+  background: var(--accent-soft);
+  border-color: rgba(245, 197, 24, 0.5);
+  color: var(--accent);
+}
+
+/* Positioned against the viewport from JS rather than anchored to the button in
+   CSS: below 760px the bar wraps and the button lands near the left edge, where
+   right-aligning a 268px card to it hangs most of the card off-screen. The
+   clamp in placeSupportCard() is what keeps it on both edges.
+   Kept `fixed` so no ancestor's overflow can clip it -- the topbar itself never
+   scrolls, so there is nothing to track. */
+.support-card {
+  position: fixed;
+  z-index: 60;
+  width: 268px;
+  padding: 14px;
+  background: var(--bg-card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.55);
+}
+
+.support-card[hidden] {
+  display: none;
+}
+
+.support-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0;
+  font-size: 13.5px;
+  font-weight: 650;
+  color: var(--text);
+}
+
+.support-heart {
+  width: 15px;
+  height: 15px;
+  flex: 0 0 auto;
+  color: #ff5f7a;
+}
+
+.support-blurb {
+  margin: 6px 0 12px;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--text-dim);
+}
+
+.support-link {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 36px;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  font-weight: 600;
+  text-decoration: none;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.support-link + .support-link {
+  margin-top: 8px;
+}
+
+.support-link svg {
+  width: 15px;
+  height: 15px;
+  flex: 0 0 auto;
+}
+
+.support-link-primary {
+  background: var(--accent);
+  color: #1b1600;
+}
+
+.support-link-primary:hover {
+  background: #ffd534;
+}
+
+.support-link-secondary {
+  background: var(--bg);
+  border: 1px solid var(--line);
+  color: var(--text);
+}
+
+.support-link-secondary:hover {
+  background: var(--bg-card-hover);
+  border-color: #3a4356;
+}
+
 /* ---------- layout ---------- */
 
 .layout {
@@ -713,6 +840,25 @@ body {
     width: 100%;
     margin-left: 0;
     order: 3;
+  }
+
+  /* The bar already wraps to three rows on a phone, and a fourth spent on one
+     button is a lot of a small screen. The support button rides the brand row
+     instead -- which has room going spare -- pushed to the far edge by the
+     brand growing into the gap. Ordering all of them keeps that row intact:
+     the button has to sort next to the brand, not after the set nav. */
+  .brand {
+    flex: 1 1 auto;
+    order: 0;
+  }
+
+  .support {
+    order: 1;
+  }
+
+  .setnav,
+  .cross-toggle {
+    order: 2;
   }
   .layout {
     grid-template-columns: minmax(0, 1fr);
