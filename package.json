@@ -8,11 +8,13 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
-    "verify": "tsx scripts/verify-algs.ts",
+    "verify": "tsx scripts/verify-algs.ts && tsx scripts/gen-thumbs.ts --check",
     "deploy": "pnpm build && pnpm check:legal && wrangler deploy",
     "fix-rotations": "tsx scripts/fix-rotations.ts",
     "check:legal": "tsx scripts/check-legal-info.ts",
-    "ci:build": "pnpm verify && pnpm build && pnpm check:legal"
+    "ci:build": "pnpm verify && pnpm build && pnpm check:legal",
+    "gen:thumbs": "tsx scripts/gen-thumbs.ts",
+    "check:thumbs": "tsx scripts/gen-thumbs.ts --check"
   },
   "dependencies": {
     "@fontsource-variable/inter": "^5.3.0",

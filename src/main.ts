@@ -4,7 +4,10 @@ import { F2L_CASES } from "./data/f2l";
 import { OLL_CASES } from "./data/oll";
 import { PLL_CASES } from "./data/pll";
 import type { CaseSet, CubeCase, F2LRecognition } from "./data/types";
+import { THUMBS } from "./data/thumbs.generated";
 import { cubeIcon, crossFace, FACE_WORD, type IconSpec } from "./finder-icons";
+import { cubeThumb, llThumb } from "./cube-thumb";
+import { SETUP_ALG, stickeringMask, type Cross } from "./stickering";
 
 const SETS: Record<CaseSet, CubeCase[]> = { F2L: F2L_CASES, OLL: OLL_CASES, PLL: PLL_CASES };
 const SET_ORDER: CaseSet[] = ["F2L", "OLL", "PLL"];
@@ -14,57 +17,6 @@ const BLURB: Record<CaseSet, string> = {
   OLL: "Orient the last layer — make the whole top face one colour.",
   PLL: "Permute the last layer — move the pieces into place.",
 };
-
-/** The flat last-layer diagram is how cubers actually recognise OLL and PLL. */
-const THUMB_VIZ: Record<CaseSet, string> = {
-  F2L: "3D",
-  OLL: "experimental-2D-LL",
-  PLL: "experimental-2D-LL",
-};
-
-// ---------------------------------------------------------------- stickering
-//
-// cubing.js ships with white on U and yellow on D, so out of the box the cube
-// looks like a yellow-cross solve. Rotating it with x2 puts white on the bottom
-// where most cubers keep it — but the built-in stickering masks ("OLL", "PLL",
-// "F2L") are keyed by piece identity, so after a rotation they dim the layer
-// that has moved to the *bottom*. We therefore build the masks ourselves and
-// point them at whichever pieces form the last layer in the chosen orientation.
-
-type Cross = "white" | "yellow";
-
-/** Pieces whose home is the last layer, per orientation. */
-const LL_PIECES: Record<Cross, number[]> = { white: [4, 5, 6, 7], yellow: [0, 1, 2, 3] };
-/** Index of the last-layer centre (CENTERS is ordered U L F R B D). */
-const LL_CENTRE: Record<Cross, number> = { white: 5, yellow: 0 };
-// x2 keeps white on the bottom AND turns the nicer pair of side faces toward
-// the camera: blue front / red right, instead of z2's green front / orange right.
-const SETUP_ALG: Record<Cross, string> = { white: "x2", yellow: "" };
-
-type FaceletMask = "regular" | "ignored";
-
-function stickeringMask(set: CaseSet, cross: Cross) {
-  const ll = LL_PIECES[cross];
-  const facelets = (piece: number, count: number): FaceletMask[] => {
-    const isLL = ll.includes(piece);
-    if (set === "F2L") return Array(count).fill(isLL ? "ignored" : "regular");
-    if (set === "PLL") return Array(count).fill(isLL ? "regular" : "ignored");
-    // OLL only cares whether a last-layer sticker points along the U/D axis,
-    // which is always facelet 0 — the sticker orientation is measured from.
-    return Array.from({ length: count }, (_, f) => (isLL && f === 0 ? "regular" : "ignored"));
-  };
-  const centre = (i: number): FaceletMask => {
-    if (i === LL_CENTRE[cross]) return set === "F2L" ? "ignored" : "regular";
-    return set === "F2L" ? "regular" : "ignored";
-  };
-  return {
-    orbits: {
-      EDGES: { pieces: Array.from({ length: 12 }, (_, i) => ({ facelets: facelets(i, 2) })) },
-      CORNERS: { pieces: Array.from({ length: 8 }, (_, i) => ({ facelets: facelets(i, 3) })) },
-      CENTERS: { pieces: Array.from({ length: 6 }, (_, i) => ({ facelets: [centre(i)] })) },
-    },
-  };
-}
 
 // ---------------------------------------------------------------- state
 
@@ -180,30 +132,8 @@ function visibleCases(): CubeCase[] {
 
 // ---------------------------------------------------------------- players
 
-/**
- * Mounting 57 players at once costs seconds of jank, so only the first screenful
- * is built eagerly and the rest wait until they scroll into view. The eager batch
- * matters: a browser does not compute intersections for a hidden tab, so a purely
- * lazy grid renders completely empty if the page is opened in a background tab.
- */
-const EAGER_THUMBS = 24;
 /** Cards by case id, so selecting one does not force a grid rebuild. */
 const cardElements = new Map<string, HTMLElement>();
-const lazyThumbs = new WeakMap<Element, () => void>();
-const thumbObserver = new IntersectionObserver(
-  (entries) => {
-    for (const e of entries) {
-      if (!e.isIntersecting) continue;
-      const mount = lazyThumbs.get(e.target);
-      if (mount) {
-        mount();
-        lazyThumbs.delete(e.target);
-        thumbObserver.unobserve(e.target);
-      }
-    }
-  },
-  { rootMargin: "300px" },
-);
 
 type Player = HTMLElement & {
   alg: string;
@@ -218,7 +148,8 @@ type Player = HTMLElement & {
   jumpToEnd(): void;
 };
 
-function makePlayer(c: CubeCase, opts: { viz: string; detail: boolean; set: CaseSet }): Player {
+/** The detail panel's player — the only live cube left in the app. */
+function makePlayer(c: CubeCase, opts: { detail: boolean; set: CaseSet }): Player {
   const p = document.createElement("twisty-player") as Player;
   p.setAttribute("puzzle", "3x3x3");
   p.setAttribute("alg", c.algs[opts.detail ? state.algIndex : 0] ?? c.algs[0]);
@@ -226,7 +157,7 @@ function makePlayer(c: CubeCase, opts: { viz: string; detail: boolean; set: Case
   p.setAttribute("experimental-setup-anchor", "end");
   const setup = SETUP_ALG[state.cross];
   if (setup) p.setAttribute("experimental-setup-alg", setup);
-  p.setAttribute("visualization", opts.viz);
+  p.setAttribute("visualization", "3D");
   p.setAttribute("background", "none");
   p.setAttribute("control-panel", "none");
   p.setAttribute("viewer-link", "none");
@@ -471,24 +402,20 @@ function renderGrid() {
     else buckets.set(c.group, [c]);
   }
 
-  let index = 0;
   for (const [group, members] of buckets) {
     if (!state.group) grid.append(el("div", "group-head", group));
-    for (const c of members) renderCard(c, grid, index++ < EAGER_THUMBS);
+    for (const c of members) renderCard(c, grid);
   }
 }
 
-function renderCard(c: CubeCase, grid: HTMLElement, eager: boolean) {
+function renderCard(c: CubeCase, grid: HTMLElement) {
   const card = el("button", "case") as HTMLButtonElement;
   card.setAttribute("aria-current", String(state.selected === c.id));
   card.title = c.name;
 
   const thumb = el("div", "thumb");
-  const set = state.set;
-  const mount = () => {
-    if (state.set !== set || thumb.childElementCount) return;
-    thumb.append(makePlayer(c, { viz: THUMB_VIZ[set], detail: false, set }));
-  };
+  const colours = THUMBS[c.id][state.cross];
+  thumb.append(state.set === "F2L" ? cubeThumb(colours) : llThumb(colours));
 
   const foot = el("div", "case-foot");
   foot.append(
@@ -499,23 +426,13 @@ function renderCard(c: CubeCase, grid: HTMLElement, eager: boolean) {
   card.onclick = () => {
     state.selected = c.id;
     state.algIndex = 0;
-    // Rebuilding the grid here would tear down and recreate every thumbnail
-    // player just to move a highlight, which exhausts the 3D renderer.
+    // Moving the highlight does not need the grid rebuilt.
     updateSelection();
     renderDetail();
     $("#detail").classList.add("open");
   };
   grid.append(card);
   cardElements.set(c.id, card);
-
-  // Only now that the card is in the document: a TwistyPlayer observes itself for
-  // intersection from its constructor and never initialises if it is built inside
-  // a detached subtree, so it must be created after its container is attached.
-  if (eager) mount();
-  else {
-    lazyThumbs.set(thumb, mount);
-    thumbObserver.observe(thumb);
-  }
 }
 
 function updateSelection() {
@@ -831,7 +748,7 @@ function buildDetailShell(): DetailShell {
   host.append(inner);
 
   // Created only now that its container is attached, during the first render.
-  const player = makePlayer(SETS[state.set][0], { viz: "3D", detail: true, set: state.set });
+  const player = makePlayer(SETS[state.set][0], { detail: true, set: state.set });
   wrap.append(player);
 
   const built: DetailShell = {
@@ -1018,9 +935,6 @@ function renderAll() {
   renderSetNav();
   renderCrossToggle();
   renderSidebar();
-  // The detail player is built before the grid: cubing.js initialises a player
-  // from a shared IntersectionObserver callback, and a large batch of thumbnails
-  // created in the same tick can starve the one created last.
   renderDetail();
   renderGrid();
 }
