@@ -1,4 +1,4 @@
-# Speed Cuben
+# Speeden & Cuben
 
 A CFOP algorithm reference with live 3D playback — all **41 F2L**, **57 OLL** and
 **21 PLL** cases, browsable fast.

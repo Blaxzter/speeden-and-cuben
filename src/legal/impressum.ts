@@ -68,7 +68,7 @@ document.querySelector<HTMLElement>("#legal")!.innerHTML = `
   <h2>Copyright</h2>
   <p>
     The content created by the operator on these pages is subject to German copyright law.
-    Speed Cuben itself is open-source software, released under the MIT License; see the
+    Speeden &amp; Cuben itself is open-source software, released under the MIT License; see the
     <a href="https://github.com/Blaxzter/speeden-and-cuben" target="_blank" rel="noreferrer">GitHub repository</a>
     for the licence terms. The cube rendering and algorithm engine are provided by
     <a href="https://js.cubing.net/cubing/" target="_blank" rel="noreferrer">cubing.js</a>,

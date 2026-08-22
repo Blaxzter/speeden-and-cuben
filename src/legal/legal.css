@@ -2,7 +2,7 @@
  * Long-form chrome for the standalone legal pages (Impressum / Datenschutz).
  * Deliberately separate from the app shell — no sidebar, no detail pane — so
  * the text reads as a document. Shares the app's tokens from style.css, so it
- * stays visually part of Speed Cuben.
+ * stays visually part of Speeden & Cuben.
  */
 
 .legal-page {
