@@ -525,6 +525,25 @@ body {
   font-weight: 600;
 }
 
+/* A question with nothing to read against is not a question yet, so it is
+   held rather than answered against a silently assumed front-right. */
+.opt:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.opt:disabled:hover {
+  border-color: var(--line);
+  color: var(--text-dim);
+}
+
+.finder-locked {
+  margin: 7px 0 0;
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: var(--text-faint);
+}
+
 .finder-count {
   margin: 13px 0 0;
   font-size: 12px;

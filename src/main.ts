@@ -231,6 +231,23 @@ function renderCrossToggle() {
 
 type Opt = { v: number; label: string; icon: IconSpec };
 
+/**
+ * Which orientation answer each position answer gives its meaning to.
+ *
+ * "Facing back" is not a fact about a corner, it is a fact about a corner at
+ * back-left: the same twist reads as "facing front" once the piece is at
+ * front-right. So an orientation question waits for its position (it would
+ * otherwise quietly word itself for front-right), and a position that moves
+ * afterwards retires the orientation instead of re-labelling the tile the user
+ * already picked.
+ */
+const ORI_OF: Partial<Record<keyof Finder, keyof Finder>> = { cornerPos: "cornerOri", edgePos: "edgeOri" };
+const POS_OF: Partial<Record<keyof Finder, keyof Finder>> = { cornerOri: "cornerPos", edgeOri: "edgePos" };
+const LOCK_NOTE: Partial<Record<keyof Finder, string>> = {
+  cornerOri: "Say where the corner is first — the cross sticker is read against it.",
+  edgeOri: "Say where the edge is first.",
+};
+
 /** The other piece's answered position, for the position tiles to draw faintly. */
 const ghostOf = (kind: "corner" | "edge"): IconSpec["ghost"] => {
   const pos = kind === "corner" ? state.finder.cornerPos : state.finder.edgePos;
@@ -274,15 +291,18 @@ const edgeOriOpts = (): Opt[] => {
   ].map((o) => ({ ...o, icon: { cross: state.cross, piece: { kind: "edge", pos, ori: o.v } } }));
 };
 
-function optRow<K extends keyof Finder>(k: K, opts: Opt[], cols: number) {
+function optRow<K extends keyof Finder>(k: K, opts: Opt[], cols: number, locked: boolean) {
   const row = el("div", "opt-row");
   row.style.setProperty("--cols", String(cols));
   for (const o of opts) {
     const b = el("button", "opt") as HTMLButtonElement;
+    b.disabled = locked;
     b.setAttribute("aria-pressed", String(state.finder[k] === o.v));
     b.append(cubeIcon(o.icon), el("span", "opt-label", o.label));
     b.onclick = () => {
       state.finder[k] = (state.finder[k] === o.v ? null : o.v) as Finder[K];
+      const ori = ORI_OF[k];
+      if (ori) state.finder[ori] = null;
       ensureSelectionVisible();
       renderAll();
     };
@@ -351,8 +371,11 @@ function renderSidebar() {
       ["Edge is", "edgeOri", edgeOriOpts(), 2],
     ];
     for (const [label, key, opts, cols] of groups) {
+      const pos = POS_OF[key];
+      const locked = pos !== undefined && state.finder[pos] === null;
       const g = el("div", "finder-group");
-      g.append(el("div", "finder-label", label), optRow(key, opts, cols));
+      g.append(el("div", "finder-label", label), optRow(key, opts, cols, locked));
+      if (locked) g.append(el("p", "finder-locked", LOCK_NOTE[key]));
       box.append(g);
     }
 
