@@ -113,6 +113,22 @@ function finderMatches(r: F2LRecognition, f: Finder): boolean {
   return false;
 }
 
+/**
+ * The running total under the questions. Two of the four answers cannot narrow
+ * anything by themselves — any U-layer position matches every U-layer case —
+ * so without a total a correct filter reads as a broken one.
+ */
+function finderProgress(): string {
+  const all = SETS.F2L;
+  const answered = Object.values(state.finder).filter((v) => v !== null).length;
+  const left = all.filter((c) => c.recognition && finderMatches(c.recognition, state.finder)).length;
+  if (answered === 0) return `Answer above to narrow all ${all.length} cases down.`;
+  // The one reading no case answers to is the pair already solved.
+  if (left === 0) return "That pair is already solved — no case to insert.";
+  if (left === 1) return "One case left — it is the selected one.";
+  return `${left} of ${all.length} cases left.`;
+}
+
 function visibleCases(): CubeCase[] {
   const q = state.query.trim().toLowerCase();
   const f = state.finder;
@@ -215,6 +231,12 @@ function renderCrossToggle() {
 
 type Opt = { v: number; label: string; icon: IconSpec };
 
+/** The other piece's answered position, for the position tiles to draw faintly. */
+const ghostOf = (kind: "corner" | "edge"): IconSpec["ghost"] => {
+  const pos = kind === "corner" ? state.finder.cornerPos : state.finder.edgePos;
+  return pos === null ? undefined : { kind, pos };
+};
+
 const cornerPosOpts = (): Opt[] =>
   [
     { v: 0, label: "Front-right" },
@@ -222,7 +244,7 @@ const cornerPosOpts = (): Opt[] =>
     { v: 2, label: "Back-left" },
     { v: 3, label: "Front-left" },
     { v: 4, label: "In slot" },
-  ].map((o) => ({ ...o, icon: { cross: state.cross, spot: { kind: "corner", pos: o.v } } }));
+  ].map((o) => ({ ...o, icon: { cross: state.cross, spot: { kind: "corner", pos: o.v }, ghost: ghostOf("edge") } }));
 
 const cornerOriOpts = (): Opt[] => {
   // Which face "orientation 1" lands on depends on where the corner is, so the
@@ -242,7 +264,7 @@ const edgePosOpts = (): Opt[] =>
     { v: 2, label: "Back" },
     { v: 3, label: "Left" },
     { v: 8, label: "In slot" },
-  ].map((o) => ({ ...o, icon: { cross: state.cross, spot: { kind: "edge", pos: o.v } } }));
+  ].map((o) => ({ ...o, icon: { cross: state.cross, spot: { kind: "edge", pos: o.v }, ghost: ghostOf("corner") } }));
 
 const edgeOriOpts = (): Opt[] => {
   const pos = state.finder.edgePos ?? 0;
@@ -318,7 +340,7 @@ function renderSidebar() {
       el(
         "p",
         undefined,
-        "Look at your cube and pick the picture that matches. Answer for the cube exactly as it sits — turning the top layer is free, so the finder lines it up with the diagrams for you.",
+        "Look at your cube as it sits and pick the picture that matches. Turning the top layer is free, so where a piece sits says nothing on its own — what picks the case is how the corner and edge sit relative to each other. All four answers together leave exactly one.",
       ),
     );
 
@@ -333,6 +355,8 @@ function renderSidebar() {
       g.append(el("div", "finder-label", label), optRow(key, opts, cols));
       box.append(g);
     }
+
+    box.append(el("p", "finder-count", finderProgress()));
 
     const reset = el("button", "finder-reset", "Clear finder") as HTMLButtonElement;
     reset.onclick = () => {

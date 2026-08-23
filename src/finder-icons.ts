@@ -126,6 +126,8 @@ const shade = (hex: string, k: number) => {
 
 const DIM = "#5c616d";
 const SPOT = "#f5c518";
+/** The same accent, dimmed until it reads as context rather than as an answer. */
+const GHOST = "#8a7c4a";
 
 type Kind = "corner" | "edge";
 export interface IconSpec {
@@ -134,6 +136,13 @@ export interface IconSpec {
   piece?: { kind: Kind; pos: number; ori: number };
   /** Light up a position without claiming an orientation — answers "where". */
   spot?: { kind: Kind; pos: number };
+  /**
+   * The piece this question is *not* about, drawn faintly where the finder
+   * already knows it sits. "Corner is at back-left" says nothing on its own —
+   * a U turn moves it anywhere — so each position question shows the other
+   * piece too, and what the tile really asks becomes "how do these two sit?".
+   */
+  ghost?: { kind: Kind; pos: number };
 }
 
 export function cubeIcon(spec: IconSpec): SVGSVGElement {
@@ -151,6 +160,7 @@ export function cubeIcon(spec: IconSpec): SVGSVGElement {
   const paint = (kind: Kind, pos: number, colour: string) => {
     for (const [face, cell] of Object.entries(cellsOf(kind, pos))) fill.set(key(face as Visible, cell), colour);
   };
+  if (spec.ghost) paint(spec.ghost.kind, spec.ghost.pos, GHOST);
   if (spec.spot) paint(spec.spot.kind, spec.spot.pos, SPOT);
   if (spec.piece) {
     const { kind, pos, ori } = spec.piece;

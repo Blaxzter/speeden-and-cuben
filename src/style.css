@@ -525,8 +525,16 @@ body {
   font-weight: 600;
 }
 
+.finder-count {
+  margin: 13px 0 0;
+  font-size: 12px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
 .finder-reset {
-  margin-top: 13px;
+  margin-top: 8px;
   width: 100%;
   appearance: none;
   border: 1px solid var(--line);
