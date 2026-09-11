@@ -13,6 +13,12 @@
  * top face alone gets you most of the way (usually to two candidates, at worst
  * to six), and the side stickers of the twisted corners settle the rest.
  *
+ * You are rarely asked for all of those side stickers, though. A corner whose
+ * twist every remaining case agrees on has already been answered by the rest of
+ * the drawing, so the pad fills it in instead of asking — which in practice is
+ * about half of them, and usually all of the ones left once a single tap has
+ * picked the case out.
+ *
  * Which way round you hold the cube is not part of the case, so a drawing is
  * matched against every case in all four quarter-turns rather than only the one
  * the cards happen to be drawn in.
@@ -101,8 +107,6 @@ function patternOf(id: string): Pattern {
   };
 }
 
-const PATTERNS = new Map(OLL_CASES.map((c) => [c.id, patternOf(c.id)] as const));
-
 function rotate(p: Pattern): Pattern {
   const corner: boolean[] = [];
   const edge: boolean[] = [];
@@ -114,6 +118,15 @@ function rotate(p: Pattern): Pattern {
   }
   return { corner, edge, side };
 }
+
+/** Every case's pattern held every way round, in `y` order from the card's own. */
+const TURNS = new Map(
+  OLL_CASES.map((c) => {
+    const held = [patternOf(c.id)];
+    while (held.length < 4) held.push(rotate(held[held.length - 1]));
+    return [c.id, held] as const;
+  }),
+);
 
 // -------------------------------------------------------------- the drawing
 
@@ -271,19 +284,22 @@ function fitsSoFar(p: Pattern, s: OllShape): boolean {
 
 /** Which quarter turns of a case line it up with the drawing. */
 function turnsMatching(id: string, shape: OllShape, fit: Fit = fits): number[] {
-  const base = PATTERNS.get(id);
-  if (!base) return [];
-  const out: number[] = [];
-  let p = base;
-  for (let k = 0; k < 4; k++) {
-    if (fit(p, shape)) out.push(k);
-    p = rotate(p);
-  }
-  return out;
+  const held = TURNS.get(id);
+  if (!held) return [];
+  return held.flatMap((p, k) => (fit(p, shape) ? [k] : []));
+}
+
+/** One way of holding one case that the drawing lines up with. */
+type Match = { id: string; pattern: Pattern };
+
+function matching(shape: OllShape, fit: Fit): Match[] {
+  return OLL_CASES.flatMap(({ id }) =>
+    (TURNS.get(id) ?? []).flatMap((pattern) => (fit(pattern, shape) ? [{ id, pattern }] : [])),
+  );
 }
 
 /**
- * The cases a drawing points at, and whether it is pointing at them exactly.
+ * Everything still in play, read the strictest way the drawing allows.
  *
  * Half-drawn, a pad is usually not a cube at all: three oriented edges is a
  * state no cube can be in, and the honest answer to it is an empty grid — which
@@ -291,11 +307,54 @@ function turnsMatching(id: string, shape: OllShape, fit: Fit = fits): number[] {
  * nothing is shaped like the pad, the stickers actually painted are kept and
  * the rest of it is treated as not yet said.
  */
+function inPlay(shape: OllShape): { exact: boolean; hits: Match[] } {
+  const hits = matching(shape, fits);
+  return hits.length > 0
+    ? { exact: true, hits }
+    : { exact: false, hits: matching(shape, fitsSoFar) };
+}
+
+/** The cases a drawing points at, and whether it is pointing at them exactly. */
 export function shapeHits(shape: OllShape): { exact: boolean; ids: string[] } {
-  const hit = (fit: Fit) =>
-    OLL_CASES.filter((c) => turnsMatching(c.id, shape, fit).length > 0).map((c) => c.id);
-  const exact = hit(fits);
-  return exact.length > 0 ? { exact: true, ids: exact } : { exact: false, ids: hit(fitsSoFar) };
+  const { exact, hits } = inPlay(shape);
+  return { exact, ids: [...new Set(hits.map((m) => m.id))] };
+}
+
+/**
+ * The twists the drawing has already settled without being told them.
+ *
+ * A corner's side is a question the top face cannot answer — but the rest of
+ * the drawing often answers it anyway. Once the shape is down to cases that all
+ * twist a corner the same way, there is nothing left to ask about it: tapping
+ * either of its dots could only confirm what every candidate already agrees on.
+ * So the pad fills it in rather than leaving a question mark over a settled
+ * fact, and the drawing narrows to the case a tap sooner.
+ *
+ * Nothing is written back into the drawing: this is read off whatever is in
+ * play right now, so rubbing a sticker out widens the field and takes the
+ * filled-in twists back with it.
+ */
+function impliedSides(shape: OllShape): (number | null)[] {
+  const out: (number | null)[] = [null, null, null, null];
+  if (!shape.drawn) return out;
+  const { hits } = inPlay(shape);
+  if (hits.length === 0) return out;
+  for (const i of SLOTS) {
+    if (shape.corner[i] || shape.side[i] !== null) continue;
+    // A candidate that stands this corner up has no side at all, and disagrees
+    // with every one that twists it — `-1` says so and blocks the fill.
+    const sides = new Set(hits.map((m) => (m.pattern.corner[i] ? -1 : m.pattern.side[i])));
+    const [only] = sides;
+    if (sides.size === 1 && only >= 0) out[i] = only;
+  }
+  return out;
+}
+
+/** The drawing plus every twist it already implies — what the pad actually shows. */
+function settled(shape: OllShape): OllShape {
+  const implied = impliedSides(shape);
+  if (implied.every((v) => v === null)) return shape;
+  return { ...shape, side: shape.side.map((v, i) => v ?? implied[i]) };
 }
 
 /**
@@ -315,9 +374,11 @@ export function alignTurn(id: string, shape: OllShape): string | null {
   return null;
 }
 
-/** Corners drawn as twisted whose side the user has not pinned down yet. */
-export const looseCorners = (shape: OllShape) =>
-  SLOTS.filter((s) => !shape.corner[s] && shape.side[s] === null).length;
+/** Corners drawn as twisted with a side still worth tapping — neither said nor implied. */
+export const looseCorners = (shape: OllShape) => {
+  const s = settled(shape);
+  return SLOTS.filter((i) => !s.corner[i] && s.side[i] === null).length;
+};
 
 // ------------------------------------------------------------------ drawing
 //
@@ -402,7 +463,10 @@ export function shapePad(
   svg.setAttribute("stroke-width", "4");
   svg.setAttribute("stroke-linejoin", "round");
 
-  const states = cellStates(shape);
+  // Everything below reads the drawing as the pad shows it — implied twists and
+  // all — so a filled-in sticker cannot be tapped back into a question.
+  const view = settled(shape);
+  const states = cellStates(view);
   const ll = LL_COLOURS[LL_LETTER[cross]];
   const dots: SVGCircleElement[] = [];
   const cells: SVGPolygonElement[] = [];
@@ -461,12 +525,12 @@ export function shapePad(
       // does not survive the redraw its own stroke triggers. Hand the pointer
       // back to plain hit-testing first, so the rest of the stroke still lands.
       if (cell.hasPointerCapture(ev.pointerId)) cell.releasePointerCapture(ev.pointerId);
-      beginStroke(target, pressMode(shape, target), onStroke);
+      beginStroke(target, pressMode(view, target), onStroke);
     });
     cell.addEventListener("keydown", (ev) => {
       if (ev.key !== " " && ev.key !== "Enter") return;
       ev.preventDefault();
-      onStroke(target, pressMode(shape, target), true);
+      onStroke(target, pressMode(view, target), true);
     });
     // Focus survives the rebuild that every stroke triggers, so a keyboard user
     // is not dropped back onto the document between one sticker and the next.
