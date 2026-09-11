@@ -1,12 +1,10 @@
 import "cubing/twisty";
 import "./style.css";
-import { F2L_CASES } from "./data/f2l";
-import { OLL_CASES } from "./data/oll";
-import { PLL_CASES } from "./data/pll";
 import type { CaseSet, CubeCase, F2LRecognition } from "./data/types";
 import { THUMBS } from "./data/thumbs.generated";
 import { cubeIcon, crossFace, FACE_WORD, type IconSpec } from "./finder-icons";
 import { cubeThumb, llThumb } from "./cube-thumb";
+import { SETS, SET_ORDER } from "./sets";
 import { SETUP_ALG, stickeringMask, type Cross } from "./stickering";
 import {
   alignTurn,
@@ -17,9 +15,7 @@ import {
   shapePad,
   stickerKey,
 } from "./oll-shape";
-
-const SETS: Record<CaseSet, CubeCase[]> = { F2L: F2L_CASES, OLL: OLL_CASES, PLL: PLL_CASES };
-const SET_ORDER: CaseSet[] = ["F2L", "OLL", "PLL"];
+import { emptyFinder, fromUrl, toUrl, type Finder } from "./url-state";
 
 const BLURB: Record<CaseSet, string> = {
   F2L: "First two layers — solve a corner/edge pair into its slot.",
@@ -28,9 +24,6 @@ const BLURB: Record<CaseSet, string> = {
 };
 
 // ---------------------------------------------------------------- state
-
-type Finder = { cornerPos: number | null; cornerOri: number | null; edgePos: number | null; edgeOri: number | null };
-const emptyFinder = (): Finder => ({ cornerPos: null, cornerOri: null, edgePos: null, edgeOri: null });
 
 function stored<T>(key: string, fallback: T): T {
   try {
@@ -66,11 +59,15 @@ const clampSpeed = (v: unknown) => {
   return Number.isFinite(n) ? Math.min(SPEED_MAX, Math.max(SPEED_MIN, n)) : 1;
 };
 
+/**
+ * Everything but `speed` is read back out of the URL on load, so these are the
+ * values a bare `/` means rather than the ones the app opens on.
+ */
 const state = {
   set: "F2L" as CaseSet,
   query: "",
   group: null as string | null,
-  selected: F2L_CASES[0].id as string | null,
+  selected: SETS.F2L[0].id as string | null,
   algIndex: 0,
   speed: clampSpeed(stored<number>("speed", 1)),
   cross: stored<Cross>("cross", "white"),
@@ -177,6 +174,84 @@ function visibleCases(): CubeCase[] {
   });
 }
 
+// ---------------------------------------------------------------- the url
+//
+// The address bar is written from the state rather than read as a second copy
+// of it: `syncUrl` is called by whatever handler just changed something, and
+// `applyUrl` puts a URL back into the state when the browser hands us one.
+
+const TITLE = "Speeden & Cuben";
+
+/** The current view: the address it lives at, and the title that sits over it. */
+type View = { url: string; title: string };
+function here(): View {
+  const url = toUrl(state, visibleCases()[0]?.id ?? null);
+  const c = SETS[state.set].find((x) => x.id === state.selected);
+  return {
+    url,
+    title: c ? `${state.set} ${c.label} · ${c.name} — ${TITLE}` : `${state.set} — ${TITLE}`,
+  };
+}
+
+function writeUrl(mode: "push" | "replace", view: View = here()) {
+  document.title = view.title;
+  if (view.url === location.pathname + location.search) return;
+  if (mode === "push") history.pushState(null, "", view.url);
+  else history.replaceState(null, "", view.url);
+}
+
+/** A coalescing write waiting out its delay, and the address it would put up. */
+let pending: { timer: ReturnType<typeof setTimeout>; url: string } | null = null;
+
+/**
+ * Reflect the state in the address bar.
+ *
+ * A click that picks something out is worth a Back button of its own, so it
+ * pushes. Typing in the search box and dragging across the shape pad are not —
+ * a query is one filter however many letters went into it, and a stroke is one
+ * filter however many stickers it crossed — so those replace, coalesced because
+ * both fire many times a second and browsers rate-limit history writes.
+ */
+function syncUrl(mode: "push" | "replace" = "push") {
+  const view = here();
+  document.title = view.title;
+  if (pending) {
+    clearTimeout(pending.timer);
+    // A push builds on whatever is in the bar, so the write it interrupted has
+    // to land first — otherwise Back from the push jumps over the whole stroke
+    // to before it was drawn.
+    if (mode === "push") history.replaceState(null, "", pending.url);
+    pending = null;
+  }
+  if (mode === "push") return writeUrl("push", view);
+  pending = {
+    url: view.url,
+    timer: setTimeout(() => {
+      pending = null;
+      writeUrl("replace", view);
+    }, 150),
+  };
+}
+
+/**
+ * Take the state from the URL — on load, and whenever Back or Forward lands.
+ *
+ * A link that says nothing about the cross is answered with the visitor's own
+ * remembered one rather than with whatever is on screen, so stepping back past
+ * a toggle really does step back past it.
+ */
+function applyUrl() {
+  const url = new URL(location.href);
+  Object.assign(state, fromUrl(url, stored<Cross>("cross", "white")));
+  // A link may name a case its own filters hide; the grid decides, and the next
+  // write puts whichever case is actually showing back in the bar.
+  ensureSelectionVisible();
+  // Below 1180px the panel is a drawer parked off-screen, so a link that names
+  // a case would otherwise arrive with the one thing it is about out of sight.
+  // A link that names none is about the grid, and leaves the drawer shut.
+  $("#detail").classList.toggle("open", url.searchParams.has("case"));
+}
+
 // ---------------------------------------------------------------- players
 
 /** Cards by case id, so selecting one does not force a grid rebuild. */
@@ -216,23 +291,44 @@ function makePlayer(c: CubeCase, opts: { detail: boolean; set: CaseSet }): Playe
 
 // ---------------------------------------------------------------- render
 
+/**
+ * True for a click the browser should keep: a middle click, or one with a
+ * modifier held. Those are asking for a new tab or window, which only works if
+ * the link is left to behave like a link.
+ */
+const plainClick = (e: MouseEvent) =>
+  e.button === 0 && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey;
+
 function renderSetNav() {
   const nav = $("#setnav");
   nav.replaceChildren();
   for (const s of SET_ORDER) {
-    const b = el("button") as HTMLButtonElement;
-    b.setAttribute("aria-selected", String(state.set === s));
-    b.append(el("span", undefined, s), el("span", "count", String(SETS[s].length)));
-    b.onclick = () => {
+    // A real anchor, because the three sets are the three pages: it can be
+    // opened in a new tab, copied, and read off the status bar before clicking.
+    const a = el("a") as HTMLAnchorElement;
+    const first = SETS[s][0].id;
+    a.href = toUrl(
+      { ...state, set: s, group: null, selected: first, algIndex: 0, finder: emptyFinder(), shape: emptyShape() },
+      first,
+    );
+    a.setAttribute("aria-current", state.set === s ? "page" : "false");
+    a.append(el("span", undefined, s), el("span", "count", String(SETS[s].length)));
+    a.onclick = (e) => {
+      if (!plainClick(e)) return;
+      e.preventDefault();
       state.set = s;
       state.group = null;
       state.selected = SETS[s][0].id;
       state.algIndex = 0;
       state.finder = emptyFinder();
       state.shape = emptyShape();
+      // The search box is not cleared by the switch, so the set's first case is
+      // not necessarily one the new grid shows.
+      ensureSelectionVisible();
+      syncUrl();
       renderAll();
     };
-    nav.append(b);
+    nav.append(a);
   }
 }
 
@@ -248,6 +344,11 @@ function renderCrossToggle() {
       if (state.cross === c) return;
       state.cross = c;
       store("cross", c);
+      // The URL carries it so a shared link shows the cube the way the sharer
+      // holds it, but it is a preference rather than a place: Back belongs to
+      // the case you were looking at, not to the colour you were looking at it
+      // in. So this repaints the address instead of adding to the history.
+      syncUrl("replace");
       renderAll();
     };
     host.append(b);
@@ -336,6 +437,7 @@ function optRow<K extends keyof Finder>(k: K, opts: Opt[], cols: number, locked:
       const ori = ORI_OF[k];
       if (ori) state.finder[ori] = null;
       ensureSelectionVisible();
+      syncUrl();
       renderAll();
     };
     row.append(b);
@@ -425,6 +527,8 @@ function renderSidebar() {
     const reset = el("button", "finder-reset", "Clear finder") as HTMLButtonElement;
     reset.onclick = () => {
       state.finder = emptyFinder();
+      ensureSelectionVisible();
+      syncUrl();
       renderAll();
     };
     box.append(reset);
@@ -452,6 +556,9 @@ function renderSidebar() {
           // last, which reads as a selection the pad does not have.
           padFocus = fromKey ? stickerKey(t) : null;
           ensureSelectionVisible();
+          // A stroke is one filter however many stickers it crossed, so the
+          // whole drag lands on a single history entry.
+          syncUrl("replace");
           renderAll();
         },
         focus,
@@ -470,6 +577,7 @@ function renderSidebar() {
     reset.onclick = () => {
       state.shape = emptyShape();
       ensureSelectionVisible();
+      syncUrl();
       renderAll();
     };
     body.append(reset);
@@ -484,7 +592,9 @@ function renderSidebar() {
   all.append(el("span", undefined, "All cases"), el("span", "n", String(SETS[state.set].length)));
   all.onclick = () => {
     state.group = null;
+    ensureSelectionVisible();
     collapseOnPhone();
+    syncUrl();
     renderAll();
   };
   list.append(all);
@@ -496,7 +606,9 @@ function renderSidebar() {
     b.append(el("span", undefined, g), el("span", "n", String(n)));
     b.onclick = () => {
       state.group = state.group === g ? null : g;
+      ensureSelectionVisible();
       collapseOnPhone();
+      syncUrl();
       renderAll();
     };
     list.append(b);
@@ -534,14 +646,20 @@ function renderGrid() {
     else buckets.set(c.group, [c]);
   }
 
+  // The case the grid would select on its own, which is the one a link leaves
+  // unnamed — so a card's href only carries a case when it is not that one.
+  const fallback = cases[0]?.id ?? null;
   for (const [group, members] of buckets) {
     if (!state.group) grid.append(el("div", "group-head", group));
-    for (const c of members) renderCard(c, grid);
+    for (const c of members) renderCard(c, grid, fallback);
   }
 }
 
-function renderCard(c: CubeCase, grid: HTMLElement) {
-  const card = el("button", "case") as HTMLButtonElement;
+function renderCard(c: CubeCase, grid: HTMLElement, fallback: string | null) {
+  // An anchor rather than a button: a case is an address now, so it can be
+  // opened in its own tab or copied out of the context menu.
+  const card = el("a", "case") as HTMLAnchorElement;
+  card.href = toUrl({ ...state, selected: c.id, algIndex: 0 }, fallback);
   card.setAttribute("aria-current", String(state.selected === c.id));
   card.title = c.name;
 
@@ -555,9 +673,12 @@ function renderCard(c: CubeCase, grid: HTMLElement) {
     el("span", "case-sub", `${moveCount(c.algs[0])}`),
   );
   card.append(thumb, foot);
-  card.onclick = () => {
+  card.onclick = (e) => {
+    if (!plainClick(e)) return;
+    e.preventDefault();
     state.selected = c.id;
     state.algIndex = 0;
+    syncUrl();
     // Moving the highlight does not need the grid rebuilt.
     updateSelection();
     renderDetail();
@@ -1089,6 +1210,7 @@ function renderDetail() {
     row.append(copy);
     row.onclick = () => {
       state.algIndex = i;
+      syncUrl();
       renderDetail();
     };
     s.algList.append(row);
@@ -1111,6 +1233,9 @@ const search = $("#search") as HTMLInputElement;
 search.addEventListener("input", () => {
   state.query = search.value;
   ensureSelectionVisible();
+  // A query is one filter however many letters went into it, so a typed word
+  // leaves a single history entry rather than one per keystroke.
+  syncUrl("replace");
   renderGrid();
   updateSelection();
   renderDetail();
@@ -1187,7 +1312,11 @@ document.addEventListener("keydown", (e) => {
     } else if (typing && search.value) {
       search.value = "";
       state.query = "";
+      ensureSelectionVisible();
+      syncUrl("replace");
       renderGrid();
+      updateSelection();
+      renderDetail();
     } else {
       $("#detail").classList.remove("open");
       $("#sidebar").classList.remove("open");
@@ -1202,4 +1331,23 @@ document.addEventListener("keydown", (e) => {
   }
 });
 
+/**
+ * Back and Forward hand us a URL the same way the first load does, so they go
+ * through the same door — nothing here knows which of the two it was.
+ */
+window.addEventListener("popstate", () => {
+  applyUrl();
+  search.value = state.query;
+  renderAll();
+  // For the title, and to tidy the entry if its address described a view the
+  // filters could not actually produce. Replacing adds nothing to go back to.
+  writeUrl("replace");
+});
+
+applyUrl();
+search.value = state.query;
 renderAll();
+// The bar may still be showing "/" or a link naming a case its own filters
+// hide; this puts the tidied-up address back without leaving a history entry
+// that goes nowhere.
+writeUrl("replace");

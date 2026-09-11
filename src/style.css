@@ -147,11 +147,12 @@ body {
   border-radius: 11px;
 }
 
-.setnav button {
+.setnav a {
   appearance: none;
   border: 0;
   background: transparent;
   color: var(--text-dim);
+  text-decoration: none;
   font: inherit;
   font-weight: 600;
   padding: 6px 16px;
@@ -160,11 +161,11 @@ body {
   transition: background 0.15s, color 0.15s;
 }
 
-.setnav button:hover {
+.setnav a:hover {
   color: var(--text);
 }
 
-.setnav button[aria-selected="true"] {
+.setnav a[aria-current="page"] {
   background: var(--accent-soft);
   color: var(--accent);
 }
@@ -684,6 +685,7 @@ body {
 
 .case {
   appearance: none;
+  text-decoration: none;
   border: 1px solid var(--line);
   background: var(--bg-card);
   border-radius: var(--radius);

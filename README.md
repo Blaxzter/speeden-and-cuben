@@ -68,6 +68,40 @@ the same env-injected values, which is what keeps the address out of the repo.
 Note the Impressum is *meant* to be public — this only keeps the address out of
 git history, it does not hide it from visitors.
 
+## The URL is the view
+
+Every click that changes *what you are looking at* lands in the address bar, so
+a view can be linked, bookmarked, opened in a second tab and walked back through
+with the browser's own buttons. The set is the path — `/f2l`, `/oll`, `/pll` —
+and everything else is a query parameter named after the question it answers:
+
+| Parameter | Means | Example |
+| --- | --- | --- |
+| `case` | The selected case, by its label | `/pll?case=T` |
+| `alg` | Which algorithm of that case, one-based | `/pll?case=Aa&alg=2` |
+| `group` | The case-type chip, slugified | `/oll?group=small-lightning` |
+| `corner` `twist` `edge` `flip` | The four F2L finder answers | `/f2l?corner=bl&twist=1&edge=r&flip=1` |
+| `shape` | The OLL drawing: 4 corners, 4 edges, then each down corner's side | `/oll?shape=10101010----` |
+| `q` | The search box | `/oll?q=sune` |
+| `cross` | White or yellow, when it is not the default white | `/f2l?cross=yellow` |
+
+Anything sitting at its default is left out, so an unfiltered page is just
+`/oll` — every parameter that *is* there was put there by a click. The selected
+case is left out too when it is simply the first one the filters leave standing,
+since loading the link picks it again.
+
+Reading is forgiving and writing is canonical: an unknown path, a case that does
+not exist, a group belonging to another set or a mangled drawing all decode to
+the default rather than to an error, and the first write puts the tidied-up URL
+back in the bar. `/oll?case=21&group=dot` asks for a case that filter hides, so
+it settles as `/oll?group=dot`.
+
+Playback is deliberately *not* in the URL — speed, where the timeline is parked,
+hint stickers. Those are how you are watching, not what. The cross toggle is in
+the URL so a shared link shows the cube the way the sharer holds it, but it does
+not add a history entry: Back belongs to the case you were looking at, not to
+the colour you were looking at it in.
+
 ## Deploying
 
 `wrangler.jsonc` is set up as an **assets-only Worker** — Cloudflare serves
