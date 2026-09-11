@@ -537,6 +537,62 @@ body {
   color: var(--text-dim);
 }
 
+/* ---------- OLL shape pad ---------- */
+
+/* The card diagram with hit targets on it, so the shape you paint reads as the
+   shape you are hunting for. Capped rather than fluid: it is a control, and a
+   control that grows to fill a full-width sidebar stops looking like one. */
+.pad {
+  display: block;
+  width: 100%;
+  max-width: 196px;
+  height: auto;
+  margin: 2px auto 0;
+  /* It is a drawing surface: a finger dragged across it paints rather than
+     scrolls, and a pointer dragged across it must not select anything. There
+     is a gutter either side of the pad to scroll the panel from. */
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* Centred to sit with the count as one caption under the diagram, rather than
+   jogging back out to the column's left edge. */
+.pad-note {
+  margin: 6px 0 0;
+  font-size: 11.5px;
+  line-height: 1.4;
+  text-align: center;
+  color: var(--text-faint);
+}
+
+/* The unpainted layer over the stickers: it carries the hit testing and draws
+   the highlights, which is the only way either of them comes out above every
+   sticker rather than under whichever ones happen to be drawn later. Unpainted
+   shapes are not hit-tested by default, hence `all`. */
+.pad-cell {
+  cursor: crosshair;
+  pointer-events: all;
+}
+
+/* A sticker is too small to tint on hover without reading as an answer, so the
+   pointer is acknowledged on the outline instead.
+
+   Not in the amber accent: half the stickers it would be drawn on are the
+   last-layer colour, which is yellow under a white cross and white under a
+   yellow one — an amber line on either is a line you cannot see. The palette's
+   blue is the one colour that reads against every fill the pad can show. */
+.pad-cell:hover {
+  stroke: var(--blue);
+  stroke-width: 6;
+}
+
+.pad-cell:focus-visible {
+  outline: none;
+  stroke: var(--blue);
+  stroke-width: 8;
+}
+
 .finder-locked {
   margin: 7px 0 0;
   font-size: 11.5px;
@@ -566,9 +622,14 @@ body {
   cursor: pointer;
 }
 
-.finder-reset:hover {
+.finder-reset:hover:not(:disabled) {
   color: var(--text);
   border-color: #394052;
+}
+
+.finder-reset:disabled {
+  opacity: 0.4;
+  cursor: default;
 }
 
 /* ---------- grid ---------- */
@@ -898,8 +959,12 @@ body {
   .cross-toggle {
     order: 2;
   }
+  /* Auto rows share out whatever the grid does not fill, so a short list of
+     cases used to stretch the sidebar row and carry the collapse bar's panel
+     down the screen with it. Pin the row to the bar's own height instead. */
   .layout {
     grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
   }
 
   /* Collapsed, the sidebar is just its bar — the grid starts right below it. */
@@ -984,6 +1049,12 @@ body {
   /* The bar overhead already reads "Find your case". */
   .finder-title {
     display: none;
+  }
+
+  /* There is width going spare here, and a flap is a finger-sized target only
+     once the diagram is bigger than the sidebar could ever make it. */
+  .pad {
+    max-width: 240px;
   }
 
   /* The wider layout tucks the case sheet under a 60px topbar, but this one

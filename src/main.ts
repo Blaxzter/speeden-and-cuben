@@ -8,6 +8,15 @@ import { THUMBS } from "./data/thumbs.generated";
 import { cubeIcon, crossFace, FACE_WORD, type IconSpec } from "./finder-icons";
 import { cubeThumb, llThumb } from "./cube-thumb";
 import { SETUP_ALG, stickeringMask, type Cross } from "./stickering";
+import {
+  alignTurn,
+  emptyShape,
+  looseCorners,
+  paintSticker,
+  shapeHits,
+  shapePad,
+  stickerKey,
+} from "./oll-shape";
 
 const SETS: Record<CaseSet, CubeCase[]> = { F2L: F2L_CASES, OLL: OLL_CASES, PLL: PLL_CASES };
 const SET_ORDER: CaseSet[] = ["F2L", "OLL", "PLL"];
@@ -66,6 +75,7 @@ const state = {
   speed: clampSpeed(stored<number>("speed", 1)),
   cross: stored<Cross>("cross", "white"),
   finder: emptyFinder(),
+  shape: emptyShape(),
 };
 
 const $ = <T extends HTMLElement>(sel: string) => document.querySelector(sel) as T;
@@ -129,12 +139,33 @@ function finderProgress(): string {
   return `${left} of ${all.length} cases left.`;
 }
 
+/**
+ * The line under the pad, which doubles as the only instruction the pad gets:
+ * a blank one is not a claim about anything, so it says what to do with it
+ * instead of counting. "Fit so far" against "left" is the difference between a
+ * drawing no cube could be in and one that picks cases out.
+ */
+function shapeProgress(): string {
+  if (!state.shape.drawn) return "Tap the stickers showing your last-layer colour.";
+  const { exact, ids } = shapeHits(state.shape);
+  if (ids.length === 0) return "Nothing fits that — check the drawing.";
+  if (!exact) return `Not a case yet — ${ids.length} fit so far.`;
+  if (ids.length === 1) {
+    const turn = alignTurn(ids[0], state.shape);
+    return turn ? `One case left — turn your cube ${turn} to match.` : "One case left.";
+  }
+  return `${ids.length} of ${SETS.OLL.length} cases left.`;
+}
+
 function visibleCases(): CubeCase[] {
   const q = state.query.trim().toLowerCase();
   const f = state.finder;
+  const shaped =
+    state.set === "OLL" && state.shape.drawn ? new Set(shapeHits(state.shape).ids) : null;
   return SETS[state.set].filter((c) => {
     if (state.group && c.group !== state.group) return false;
     if (state.set === "F2L" && c.recognition && !finderMatches(c.recognition, f)) return false;
+    if (shaped && !shaped.has(c.id)) return false;
     if (!q) return true;
     return (
       c.label.toLowerCase() === q ||
@@ -198,6 +229,7 @@ function renderSetNav() {
       state.selected = SETS[s][0].id;
       state.algIndex = 0;
       state.finder = emptyFinder();
+      state.shape = emptyShape();
       renderAll();
     };
     nav.append(b);
@@ -314,10 +346,19 @@ function optRow<K extends keyof Finder>(k: K, opts: Opt[], cols: number, locked:
 /** How many filters the user has actually set — what the collapsed bar reports. */
 function activeFilterCount() {
   const answered = state.set === "F2L" ? Object.values(state.finder).filter((v) => v !== null).length : 0;
-  return answered + (state.group === null ? 0 : 1);
+  // A drawing is one filter however many stickers went into it.
+  const drawn = state.set === "OLL" && state.shape.drawn ? 1 : 0;
+  return answered + drawn + (state.group === null ? 0 : 1);
 }
 
 const isPhone = () => window.matchMedia("(max-width: 760px)").matches;
+
+/**
+ * The sticker the shape pad was last used on. Every tap rebuilds the sidebar,
+ * so without this a keyboard user is dropped back onto the document between one
+ * sticker and the next.
+ */
+let padFocus: string | null = null;
 
 /** Picking a group is one decision, so on a phone it hands the screen back. */
 function collapseOnPhone() {
@@ -337,7 +378,7 @@ function renderSidebar() {
   side.classList.toggle("filtered", answers > 0);
   toggle.setAttribute("aria-controls", "side-body");
   toggle.setAttribute("aria-expanded", String(side.classList.contains("open")));
-  toggle.append(el("span", undefined, state.set === "F2L" ? "Find your case" : "Filter cases"));
+  toggle.append(el("span", undefined, state.set === "PLL" ? "Filter cases" : "Find your case"));
   if (answers > 0) toggle.append(el("span", "side-toggle-count", `${answers} active`));
   const chevron = el("span", "side-toggle-chevron");
   chevron.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9.5 12 15.5 18 9.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
@@ -390,8 +431,52 @@ function renderSidebar() {
     body.append(box);
   }
 
+  if (state.set === "OLL") {
+    // Claimed once per render: a tap elsewhere must not pull focus into the pad.
+    const focus = padFocus;
+    padFocus = null;
+
+    // No card round it, unlike the F2L finder: that one is four questions that
+    // need holding together, this is one picture that already has an outline.
+    body.append(
+      el("div", "side-title finder-title", "Find your case"),
+      shapePad(
+        state.shape,
+        state.cross,
+        (t, mode, fromKey) => {
+          // A stroke crosses stickers it has nothing to say about, and a drag
+          // that rebuilt the grid for each of them would be all jank.
+          if (!paintSticker(state.shape, t, mode)) return;
+          // Only a keyboard user needs focus handing back. Restoring it after a
+          // click parks a focus ring on whichever sticker the pointer touched
+          // last, which reads as a selection the pad does not have.
+          padFocus = fromKey ? stickerKey(t) : null;
+          ensureSelectionVisible();
+          renderAll();
+        },
+        focus,
+      ),
+      el("p", "finder-count", shapeProgress()),
+    );
+
+    // Only worth saying while it would still buy something: the two side
+    // stickers of a twisted corner are what the top face cannot tell apart.
+    if (state.shape.drawn && looseCorners(state.shape) > 0 && visibleCases().length > 1) {
+      body.append(el("p", "pad-note", "Tap a dotted sticker to say which way a corner is twisted."));
+    }
+
+    const reset = el("button", "finder-reset", "Clear drawing") as HTMLButtonElement;
+    reset.disabled = !state.shape.drawn;
+    reset.onclick = () => {
+      state.shape = emptyShape();
+      ensureSelectionVisible();
+      renderAll();
+    };
+    body.append(reset);
+  }
+
   const groups = [...new Set(SETS[state.set].map((c) => c.group))];
-  body.append(el("div", "side-title", state.set === "F2L" ? "Case type" : "Shape"));
+  body.append(el("div", "side-title", "Case type"));
   const list = el("div", "chip-list");
 
   const all = el("button", "chip") as HTMLButtonElement;
