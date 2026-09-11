@@ -80,7 +80,7 @@ and everything else is a query parameter named after the question it answers:
 | `case` | The selected case, by its label | `/pll?case=T` |
 | `alg` | Which algorithm of that case, one-based | `/pll?case=Aa&alg=2` |
 | `group` | The case-type chip, slugified | `/oll?group=small-lightning` |
-| `corner` `twist` `edge` `flip` | The four F2L finder answers | `/f2l?corner=bl&twist=1&edge=r&flip=1` |
+| `corner` `twist` `edge` `flip` | The four F2L finder answers | `/f2l?corner=fr&twist=1&edge=l&flip=1` |
 | `shape` | The OLL drawing: 4 corners, 4 edges, then each down corner's side | `/oll?shape=10101010----` |
 | `q` | The search box | `/oll?q=sune` |
 | `cross` | White or yellow, when it is not the default white | `/f2l?cross=yellow` |
@@ -94,7 +94,10 @@ Reading is forgiving and writing is canonical: an unknown path, a case that does
 not exist, a group belonging to another set or a mangled drawing all decode to
 the default rather than to an error, and the first write puts the tidied-up URL
 back in the bar. `/oll?case=21&group=dot` asks for a case that filter hides, so
-it settles as `/oll?group=dot`.
+it settles as `/oll?group=dot`. `corner=bl` comes from when the finder took all
+four U-layer positions; it still lands, turned into the frame the finder asks in
+now — `/f2l?corner=bl&edge=f` settles as `/f2l?corner=fr&edge=b`, the same case
+it always meant.
 
 Playback is deliberately *not* in the URL — speed, where the timeline is parked,
 hint stickers. Those are how you are watching, not what. The cross toggle is in
@@ -152,7 +155,10 @@ Live at <https://speeden-and-cuben.fabraham.dev>.
   verify` fails if any alg is not rotation-neutral.
 - F2L cases are always presented with the corner at **front-right** where it is in
   the U layer, so the fixed camera never hides the pieces you need to see. AUF is
-  free, so this changes presentation only, never the case.
+  free, so this changes presentation only, never the case. The finder asks its
+  questions in that same frame — it offers "front-right" or "in slot" and nothing
+  else, because the other three U-layer positions are the same case asked in a
+  frame no algorithm is written from.
 - **Never set `display` on a `twisty-player`.** It lays its shadow DOM out from its
   own `:host` display; overriding it (e.g. `display: block`) collapses the internal
   visualization wrapper to zero height and the cube renders into a 0px canvas —

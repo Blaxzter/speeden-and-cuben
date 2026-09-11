@@ -17,6 +17,9 @@ export interface CubeCase {
   recognition?: F2LRecognition;
 }
 
+/** The position value standing for "already in the slot", per piece. */
+export const SLOTTED = { corner: 4, edge: 8 } as const;
+
 /** Where the target pair sits, for the F2L case finder. */
 export interface F2LRecognition {
   /** 0=UFR 1=URB 2=UBL 3=UFL (U layer), 4 = already in the slot. */

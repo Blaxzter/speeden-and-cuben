@@ -1,6 +1,6 @@
 import "cubing/twisty";
 import "./style.css";
-import type { CaseSet, CubeCase, F2LRecognition } from "./data/types";
+import { SLOTTED, type CaseSet, type CubeCase, type F2LRecognition } from "./data/types";
 import { THUMBS } from "./data/thumbs.generated";
 import { cubeIcon, crossFace, FACE_WORD, type IconSpec } from "./finder-icons";
 import { cubeThumb, llThumb } from "./cube-thumb";
@@ -100,30 +100,27 @@ const moveCount = (alg: string) => displayTokens(alg).filter((m) => !isRotation(
 // ---------------------------------------------------------------- filtering
 
 /**
- * Every case is stored in one fixed presentation — corner at front-right where
- * it is in the U layer, otherwise edge at front — because turning the U layer
- * is free and never changes which case you are looking at. Nobody holds their
- * cube that way by chance, so match the finder's readings against the case in
- * *any* U turn rather than only the stored one. Corner and edge share the turn:
- * it is one cube, so their positions move together. Orientation is unaffected,
- * which is what makes the "cross sticker" and "flipped" answers absolute.
+ * Every case is stored in one frame — corner at front-right where it is in the
+ * U layer, otherwise edge at front — because turning the U layer is free and
+ * never changes which case you are looking at. The finder asks its questions in
+ * that same frame, so an answer is a plain comparison: a U turn that would have
+ * to be undone before the algorithm below runs is not a difference worth
+ * matching around. Orientation never moves with the U layer either way, which
+ * is what makes the "cross sticker" and "flipped" answers absolute.
  */
 function finderMatches(r: F2LRecognition, f: Finder): boolean {
-  for (let auf = 0; auf < 4; auf++) {
-    const turn = (p: number) => (p > 3 ? p : (p + auf) % 4);
-    if (f.cornerPos !== null && turn(f.cornerPos) !== r.cornerPos) continue;
-    if (f.edgePos !== null && turn(f.edgePos) !== r.edgePos) continue;
-    if (f.cornerOri !== null && f.cornerOri !== r.cornerOri) continue;
-    if (f.edgeOri !== null && f.edgeOri !== r.edgeOri) continue;
-    return true;
-  }
-  return false;
+  return (
+    (f.cornerPos === null || f.cornerPos === r.cornerPos) &&
+    (f.cornerOri === null || f.cornerOri === r.cornerOri) &&
+    (f.edgePos === null || f.edgePos === r.edgePos) &&
+    (f.edgeOri === null || f.edgeOri === r.edgeOri)
+  );
 }
 
 /**
- * The running total under the questions. Two of the four answers cannot narrow
- * anything by themselves — any U-layer position matches every U-layer case —
- * so without a total a correct filter reads as a broken one.
+ * The running total under the questions. Getting to one case is what the finder
+ * is for, so it reports how close the answers have come rather than leaving you
+ * to count what the grid has left.
  */
 function finderProgress(): string {
   const all = SETS.F2L;
@@ -365,36 +362,54 @@ function renderCrossToggle() {
 type Opt = { v: number; label: string; icon: IconSpec };
 
 /**
- * Which orientation answer each position answer gives its meaning to.
+ * Which answer each question is read against.
  *
- * "Facing back" is not a fact about a corner, it is a fact about a corner at
- * back-left: the same twist reads as "facing front" once the piece is at
- * front-right. So an orientation question waits for its position (it would
- * otherwise quietly word itself for front-right), and a position that moves
- * afterwards retires the orientation instead of re-labelling the tile the user
- * already picked.
+ * Nothing the finder asks means anything on its own. "Facing back" is not a
+ * fact about a corner, it is a fact about a corner at back-left — the same
+ * twist reads as "facing front" once the piece is at front-right — and a
+ * position is not a fact about the case at all, because a U turn moves it.
+ * What the finder does instead is pin the frame: turn the corner to
+ * front-right, which is free, is where every case is drawn and is where its
+ * algorithm starts from anyway. Every later answer is read against that. So a
+ * question waits for the one it is read against, and an answer that changes
+ * retires everything downstream rather than leaving a tile lit under a question
+ * it no longer answers.
  */
-const ORI_OF: Partial<Record<keyof Finder, keyof Finder>> = { cornerPos: "cornerOri", edgePos: "edgeOri" };
-const POS_OF: Partial<Record<keyof Finder, keyof Finder>> = { cornerOri: "cornerPos", edgeOri: "edgePos" };
+const READ_AGAINST: Partial<Record<keyof Finder, keyof Finder>> = {
+  cornerOri: "cornerPos",
+  edgePos: "cornerPos",
+  edgeOri: "edgePos",
+};
 const LOCK_NOTE: Partial<Record<keyof Finder, string>> = {
   cornerOri: "Say where the corner is first — the cross sticker is read against it.",
+  edgePos: "Say where the corner is first — the edge is read against it.",
   edgeOri: "Say where the edge is first.",
 };
 
-/** The other piece's answered position, for the position tiles to draw faintly. */
-const ghostOf = (kind: "corner" | "edge"): IconSpec["ghost"] => {
-  const pos = kind === "corner" ? state.finder.cornerPos : state.finder.edgePos;
-  return pos === null ? undefined : { kind, pos };
-};
+/** Retire every answer read against `k`, and everything read against those. */
+function clearDownstream(k: keyof Finder) {
+  for (const [question, base] of Object.entries(READ_AGAINST) as [keyof Finder, keyof Finder][]) {
+    if (base !== k) continue;
+    state.finder[question] = null;
+    clearDownstream(question);
+  }
+}
 
+/** The answered corner, for the edge tiles to draw faintly behind their own answer. */
+const cornerGhost = (): IconSpec["ghost"] =>
+  state.finder.cornerPos === null ? undefined : { kind: "corner", pos: state.finder.cornerPos };
+
+/**
+ * Where the corner is. The other three U-layer positions are not offered: the
+ * turn that brings the corner round to front-right is free and changes no case,
+ * and the algorithm is written from there regardless — so "back-left" would
+ * only be the same question asked in a frame nothing else uses.
+ */
 const cornerPosOpts = (): Opt[] =>
   [
     { v: 0, label: "Front-right" },
-    { v: 1, label: "Back-right" },
-    { v: 2, label: "Back-left" },
-    { v: 3, label: "Front-left" },
-    { v: 4, label: "In slot" },
-  ].map((o) => ({ ...o, icon: { cross: state.cross, spot: { kind: "corner", pos: o.v }, ghost: ghostOf("edge") } }));
+    { v: SLOTTED.corner, label: "In slot" },
+  ].map((o) => ({ ...o, icon: { cross: state.cross, spot: { kind: "corner", pos: o.v } } }));
 
 const cornerOriOpts = (): Opt[] => {
   // Which face "orientation 1" lands on depends on where the corner is, so the
@@ -402,19 +417,31 @@ const cornerOriOpts = (): Opt[] => {
   const pos = state.finder.cornerPos ?? 0;
   return [0, 1, 2].map((ori) => ({
     v: ori,
-    label: pos === 4 && ori === 0 ? "Already solved" : "Facing " + FACE_WORD[crossFace(pos, ori)],
+    label: pos === SLOTTED.corner && ori === 0 ? "Already solved" : "Facing " + FACE_WORD[crossFace(pos, ori)],
     icon: { cross: state.cross, piece: { kind: "corner", pos, ori } },
   }));
 };
 
-const edgePosOpts = (): Opt[] =>
-  [
-    { v: 0, label: "Front" },
-    { v: 1, label: "Right" },
-    { v: 2, label: "Back" },
-    { v: 3, label: "Left" },
-    { v: 8, label: "In slot" },
-  ].map((o) => ({ ...o, icon: { cross: state.cross, spot: { kind: "edge", pos: o.v }, ghost: ghostOf("corner") } }));
+/**
+ * Where the edge is, read against the corner drawn faintly beside it — which is
+ * why it waits for that answer. With the corner already in the slot the U layer
+ * carries the edge alone, so the edge's four positions collapse the way the
+ * corner's did and only the front one is left to pick.
+ */
+const edgePosOpts = (): Opt[] => {
+  const carried =
+    state.finder.cornerPos === SLOTTED.corner
+      ? []
+      : [
+          { v: 1, label: "Right" },
+          { v: 2, label: "Back" },
+          { v: 3, label: "Left" },
+        ];
+  return [{ v: 0, label: "Front" }, ...carried, { v: SLOTTED.edge, label: "In slot" }].map((o) => ({
+    ...o,
+    icon: { cross: state.cross, spot: { kind: "edge", pos: o.v }, ghost: cornerGhost() },
+  }));
+};
 
 const edgeOriOpts = (): Opt[] => {
   const pos = state.finder.edgePos ?? 0;
@@ -434,8 +461,7 @@ function optRow<K extends keyof Finder>(k: K, opts: Opt[], cols: number, locked:
     b.append(cubeIcon(o.icon), el("span", "opt-label", o.label));
     b.onclick = () => {
       state.finder[k] = (state.finder[k] === o.v ? null : o.v) as Finder[K];
-      const ori = ORI_OF[k];
-      if (ori) state.finder[ori] = null;
+      clearDownstream(k);
       ensureSelectionVisible();
       syncUrl();
       renderAll();
@@ -499,26 +525,30 @@ function renderSidebar() {
     // there by CSS rather than by not rendering it, so a resize needs no rerun.
     body.append(el("div", "side-title finder-title", "Find your case"));
     const box = el("div", "finder");
-    box.append(
-      el(
-        "p",
-        undefined,
-        "Look at your cube as it sits and pick the picture that matches. Turning the top layer is free, so where a piece sits says nothing on its own — what picks the case is how the corner and edge sit relative to each other. All four answers together leave exactly one.",
-      ),
-    );
+    box.append(el("p", undefined, "Turning the top layer is free, so line your cube up with the pictures."));
 
-    const groups: [string, keyof Finder, Opt[], number][] = [
-      ["Corner is at", "cornerPos", cornerPosOpts(), 3],
-      ["Corner's cross sticker", "cornerOri", cornerOriOpts(), 3],
-      ["Edge is at", "edgePos", edgePosOpts(), 3],
-      ["Edge is", "edgeOri", edgeOriOpts(), 2],
+    const slotted = state.finder.cornerPos === SLOTTED.corner;
+    const questions: { label: string; key: keyof Finder; opts: Opt[]; cols: number; note?: string }[] = [
+      { label: "Corner is at", key: "cornerPos", opts: cornerPosOpts(), cols: 2 },
+      { label: "Corner's cross sticker", key: "cornerOri", opts: cornerOriOpts(), cols: 3 },
+      {
+        label: "Edge is at",
+        key: "edgePos",
+        opts: edgePosOpts(),
+        cols: slotted ? 2 : 3,
+        note: slotted
+          ? "With the corner in the slot a U turn moves the edge alone, so bring it to the front."
+          : undefined,
+      },
+      { label: "Edge is", key: "edgeOri", opts: edgeOriOpts(), cols: 2 },
     ];
-    for (const [label, key, opts, cols] of groups) {
-      const pos = POS_OF[key];
-      const locked = pos !== undefined && state.finder[pos] === null;
+    for (const q of questions) {
+      const base = READ_AGAINST[q.key];
+      const locked = base !== undefined && state.finder[base] === null;
       const g = el("div", "finder-group");
-      g.append(el("div", "finder-label", label), optRow(key, opts, cols, locked));
-      if (locked) g.append(el("p", "finder-locked", LOCK_NOTE[key]));
+      g.append(el("div", "finder-label", q.label), optRow(q.key, q.opts, q.cols, locked));
+      const note = locked ? LOCK_NOTE[q.key] : q.note;
+      if (note) g.append(el("p", "finder-note", note));
       box.append(g);
     }
 

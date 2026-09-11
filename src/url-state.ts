@@ -19,7 +19,7 @@
  * write puts the tidied-up URL back in the bar.
  */
 
-import type { CaseSet, CubeCase } from "./data/types";
+import { SLOTTED, type CaseSet, type CubeCase } from "./data/types";
 import { SETS } from "./sets";
 import { emptyShape, type OllShape } from "./oll-shape";
 import type { Cross } from "./stickering";
@@ -67,11 +67,14 @@ const slug = (s: string) =>
 // rather than as the raw index, because that is the answer the user gave. The
 // two orientation answers have no such name — "twist 1" means a different face
 // depending on where the corner is — so those stay numbers.
+//
+// Only "fr" and "slot" are ever written for the corner now that the finder asks
+// its questions in one frame, but all four U-layer names are still read: links
+// written when it took any of them are still out there, and `reframe` turns
+// them into the frame rather than dropping them.
 const CORNER_AT = ["fr", "br", "bl", "fl"];
 const EDGE_AT = ["f", "r", "b", "l"];
 const IN_SLOT = "slot";
-/** The position value standing for "already in the slot", per piece. */
-const SLOTTED = { corner: 4, edge: 8 };
 
 /**
  * The drawing as twelve characters: four corners, four edges, then which side
@@ -167,6 +170,28 @@ const faceAt = (faces: string[], raw: string | null, slotted: number): number | 
   return i < 0 ? null : i;
 };
 
+/**
+ * Answers into the frame the finder asks in: corner at front-right while it is
+ * in the U layer, edge at front while the corner is not.
+ *
+ * Links written when the finder took all four U-layer positions still name
+ * them, and they were not wrong — corner and edge ride the same U turn, so
+ * turning both answers back into the fixed frame says exactly what the link
+ * said, in the spelling a tile can light up for.
+ */
+function reframe(f: Finder) {
+  const inU = (pos: number | null): pos is number => pos !== null && pos < 4;
+  if (inU(f.cornerPos)) {
+    const turn = (4 - f.cornerPos) % 4;
+    f.cornerPos = 0;
+    if (inU(f.edgePos)) f.edgePos = (f.edgePos + turn) % 4;
+  } else if (inU(f.edgePos)) {
+    // Corner in the slot: it does not travel with the U layer, so where the
+    // edge sat was free all along and every answer named the same case.
+    f.edgePos = 0;
+  }
+}
+
 /** A small whole number in `0..max`, or nothing. */
 const smallInt = (raw: string | null, max: number): number | null => {
   if (raw === null) return null;
@@ -198,12 +223,14 @@ export function fromUrl(url: URL, storedCross: Cross): UrlState {
   if (set === "F2L") {
     finder.cornerPos = faceAt(CORNER_AT, p.get("corner"), SLOTTED.corner);
     finder.edgePos = faceAt(EDGE_AT, p.get("edge"), SLOTTED.edge);
-    // An orientation is read against a position — the sidebar will not even let
-    // you answer one without the other — so a link carrying only the twist
-    // describes a state no click can reach. Drop it rather than show a filter
-    // with no lit tile behind it.
+    // Each finder answer is read against the one before it — the sidebar will
+    // not even let you answer out of order — so a link carrying only the twist,
+    // or an edge with no corner to read it against, describes a state no click
+    // can reach. Drop it rather than show a filter with no lit tile behind it.
+    if (finder.cornerPos === null) finder.edgePos = null;
     if (finder.cornerPos !== null) finder.cornerOri = smallInt(p.get("twist"), 2);
     if (finder.edgePos !== null) finder.edgeOri = smallInt(p.get("flip"), 1);
+    reframe(finder);
   }
 
   return {

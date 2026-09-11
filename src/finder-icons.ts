@@ -138,9 +138,9 @@ export interface IconSpec {
   spot?: { kind: Kind; pos: number };
   /**
    * The piece this question is *not* about, drawn faintly where the finder
-   * already knows it sits. "Corner is at back-left" says nothing on its own —
-   * a U turn moves it anywhere — so each position question shows the other
-   * piece too, and what the tile really asks becomes "how do these two sit?".
+   * already knows it sits. "Edge is at back" says nothing on its own — a U turn
+   * moves it anywhere — so the edge tiles show the corner too, and what a tile
+   * really asks becomes "how do these two sit?".
    */
   ghost?: { kind: Kind; pos: number };
 }
