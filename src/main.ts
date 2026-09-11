@@ -567,6 +567,7 @@ type DetailShell = {
   play: HTMLButtonElement;
   scrub: HTMLInputElement;
   chipRow: HTMLElement;
+  startDot: HTMLButtonElement;
   speed: HTMLInputElement;
   speedOut: HTMLElement;
   hint: HTMLElement;
@@ -576,7 +577,14 @@ type DetailShell = {
 };
 
 let shell: DetailShell | null = null;
-let moveStarts: Promise<number[]> = Promise.resolve([]);
+/**
+ * Where the chip row can park the timeline. `stops[0]` is the case as it
+ * arrives, and `stops[i + 1]` is the cube once move `i` has been turned — so
+ * there is always one stop more than there are moves, which is why the row opens
+ * with a dot. A chip means "the cube after this move", never "the cube waiting
+ * to do it".
+ */
+let stops: Promise<number[]> = Promise.resolve([0]);
 let timeRange = { start: 0, end: 1 };
 let scrubbing = false;
 
@@ -590,11 +598,9 @@ const paintRange = (input: HTMLInputElement) => {
 
 // ------------------------------------------------------------- chip seeking
 //
-// Clicking a move chip used to snap the cube straight to that point, which makes
-// everything you skipped invisible. Instead the timeline is driven by hand. The
-// neighbouring move plays at the tempo you picked; anything further away is
-// fast-forwarded up to the move before the one you clicked, which then plays at
-// the normal tempo — so the step that actually lands you there is still legible.
+// Clicking a marker in the row used to snap the cube straight to that point,
+// which makes everything you skipped invisible. Instead the timeline is driven
+// by hand, so the turns you asked to travel through are still turns you watch.
 
 /** Fast-forward is at least this much quicker than normal playback... */
 const FF_SCALE = 3;
@@ -617,10 +623,13 @@ function cancelSeek() {
   return ++transportSeq;
 }
 
-/** Index of the move the timeline is currently sitting on. */
-const currentMoveIndex = (list: number[], timestamp: number) => {
+/** How far a timestamp may sit from a stop and still count as standing on it. */
+const EPS = 1;
+
+/** The stop the timeline is standing on, or the last one it went past. */
+const currentStop = (list: number[], timestamp: number) => {
   let i = 0;
-  for (let k = 0; k < list.length; k++) if (list[k] <= timestamp + 1) i = k;
+  for (let k = 0; k < list.length; k++) if (list[k] <= timestamp + EPS) i = k;
   return i;
 };
 
@@ -657,6 +666,28 @@ function seekAlong(p: Player, from: number, legs: SeekLeg[]) {
 }
 
 /**
+ * Walk the cube to a stop, which is what clicking any marker in the row does.
+ * A neighbouring stop is one ordinary move away, so it simply plays. Anything
+ * further away is fast-forwarded as far as the stop before the one you clicked,
+ * and the move that actually lands you there plays at the normal tempo.
+ */
+async function seekToStop(p: Player, target: number) {
+  const seq = cancelSeek();
+  const list = await stops;
+  const to = list[target] ?? 0;
+  const { timestamp } = await p.experimentalModel.detailedTimelineInfo.get();
+  if (seq !== transportSeq) return;
+  const cur = currentStop(list, timestamp);
+  if (Math.abs(target - cur) <= 1) return seekAlong(p, timestamp, [{ to, rate: state.speed }]);
+  const handoff = list[target > cur ? target - 1 : target + 1];
+  const rate = Math.max(state.speed * FF_SCALE, Math.abs(handoff - timestamp) / FF_BUDGET);
+  seekAlong(p, timestamp, [
+    { to: handoff, rate },
+    { to, rate: state.speed },
+  ]);
+}
+
+/**
  * What the player is currently showing. Requesting a timestamp — scrubbing, the
  * step buttons, a move chip — leaves that request standing on the model, so a
  * newly picked case would otherwise open part-way through its alg.
@@ -675,11 +706,12 @@ function configurePlayer(p: Player, c: CubeCase, set: CaseSet) {
   else p.removeAttribute("experimental-setup-alg");
   p.experimentalStickeringMaskOrbits = stickeringMask(set, state.cross);
   p.tempoScale = state.speed;
-  moveStarts = p.experimentalModel.indexer
-    .get()
-    .then((indexer: any) =>
-      Array.from({ length: indexer.numAnimatedLeaves() }, (_, k) => indexer.indexToMoveStartTimestamp(k)),
-    );
+  stops = p.experimentalModel.indexer.get().then((indexer: any) => [
+    // A move's start is also the previous move's finish, so the starts double as
+    // the stops for every move but the last — which finishes where the alg does.
+    ...Array.from({ length: indexer.numAnimatedLeaves() }, (_, k) => indexer.indexToMoveStartTimestamp(k)),
+    indexer.algDuration(),
+  ]);
 
   // Rewind only when the player is pointed somewhere new: renderDetail() also runs
   // on every search keystroke and filter click, which must not interrupt playback.
@@ -798,8 +830,21 @@ function buildDetailShell(): DetailShell {
   const player = makePlayer(SETS[state.set][0], { detail: true, set: state.set });
   wrap.append(player);
 
+  /**
+   * The row lists positions, not moves. Without the dot the first chip has to
+   * stand in for "nothing has happened yet" as well as for its own move, so R
+   * sits lit before the R has been turned and clicking it looks like it does
+   * nothing at all.
+   */
+  const startDot = el("button", "chip-start") as HTMLButtonElement;
+  startDot.type = "button";
+  startDot.title = "Back to the start";
+  startDot.setAttribute("aria-label", "Back to the start");
+  startDot.onclick = () => void seekToStop(player, 0);
+  chipRow.append(startDot);
+
   const built: DetailShell = {
-    empty, inner, eyebrow, title, player, play, scrub, chipRow,
+    empty, inner, eyebrow, title, player, play, scrub, chipRow, startDot,
     speed, speedOut, hint, algLabel, algList, chips: [],
   };
 
@@ -849,10 +894,9 @@ function buildDetailShell(): DetailShell {
     paintPlay(true);
   };
 
-  const EPS = 1;
   const step = async (delta: number) => {
     const seq = cancelSeek();
-    const list = await moveStarts;
+    const list = await stops;
     const info = await player.experimentalModel.detailedTimelineInfo.get();
     if (seq !== transportSeq) return;
     player.pause();
@@ -901,10 +945,17 @@ function buildDetailShell(): DetailShell {
         scrub.value = String(Math.round(fraction * 1000));
         paintRange(scrub);
       }
-      void moveStarts.then((list) => {
+      void stops.then((list) => {
         if (!built.chips.length) return;
-        const i = info.atEnd ? built.chips.length - 1 : currentMoveIndex(list, info.timestamp);
-        built.chips.forEach((chip, n) => chip.classList.toggle("current", n === i));
+        const at = info.atEnd ? built.chips.length : currentStop(list, info.timestamp);
+        // Mid-turn the cube stands on neither marker: it has left `at` and has
+        // not arrived at the next one, so that move is outlined rather than lit.
+        const turning = at < built.chips.length && info.timestamp > list[at] + EPS ? at : -1;
+        built.startDot.classList.toggle("current", at === 0);
+        built.chips.forEach((chip, n) => {
+          chip.classList.toggle("current", n === at - 1);
+          chip.classList.toggle("turning", n === turning);
+        });
       });
     },
   );
@@ -928,28 +979,11 @@ function renderDetail() {
   s.hint.hidden = !c.hint;
 
   const alg = c.algs[state.algIndex] ?? c.algs[0];
-  s.chipRow.replaceChildren();
+  s.chipRow.replaceChildren(s.startDot);
   s.chips = displayTokens(alg).map((m, i) => {
     const chip = el("button", "chip-move", m) as HTMLButtonElement;
-    chip.title = `Play to move ${i + 1}`;
-    chip.onclick = async () => {
-      const seq = cancelSeek();
-      const list = await moveStarts;
-      const target = list[i] ?? 0;
-      const { timestamp } = await s.player.experimentalModel.detailedTimelineInfo.get();
-      if (seq !== transportSeq) return;
-      const cur = currentMoveIndex(list, timestamp);
-      // A neighbouring chip is one ordinary move away, so just play it. Anything
-      // further away is fast-forwarded (or rewound) as far as the move that ends
-      // where you clicked, and that last move plays at the normal tempo.
-      if (Math.abs(i - cur) <= 1) return seekAlong(s.player, timestamp, [{ to: target, rate: state.speed }]);
-      const handoff = list[i > cur ? i - 1 : i + 1];
-      const rate = Math.max(state.speed * FF_SCALE, Math.abs(handoff - timestamp) / FF_BUDGET);
-      seekAlong(s.player, timestamp, [
-        { to: handoff, rate },
-        { to: target, rate: state.speed },
-      ]);
-    };
+    chip.title = `Play through ${m}`;
+    chip.onclick = () => void seekToStop(s.player, i + 1);
     s.chipRow.append(chip);
     return chip;
   });

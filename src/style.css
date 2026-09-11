@@ -1209,6 +1209,50 @@ body {
   font-weight: 700;
 }
 
+/* Mid-turn the cube is between two markers, so the move being turned is only
+   outlined -- the filled one is still the position the cube last stood on. */
+.chip-move.turning {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* The case as it arrives, before a single turn. It is a position like any other
+   chip, so it is the same chip -- its label is just a mark rather than a move.
+   Stretching it to the row keeps the dot centred against letters of any height. */
+.chip-start {
+  appearance: none;
+  align-self: stretch;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--bg-card);
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: all 0.12s;
+}
+
+.chip-start::after {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.chip-start:hover {
+  color: var(--text);
+  border-color: #394052;
+}
+
+.chip-start.current {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #12151c;
+}
+
 /* ---------- options strip ---------- */
 
 .opt-strip {
