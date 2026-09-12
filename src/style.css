@@ -633,6 +633,73 @@ body {
   cursor: default;
 }
 
+/* The stuck-piece aside. Folded away by default: it answers a question only a
+   few cubes ever raise, and open by default it would read as a fifth step. */
+
+.finder-help {
+  margin-top: 11px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line-soft);
+}
+
+.finder-help > summary {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--text-faint);
+  /* Both spellings: the standard one, and the WebKit pseudo-element below. */
+  list-style: none;
+  transition: color 0.13s;
+}
+
+.finder-help > summary::-webkit-details-marker {
+  display: none;
+}
+
+/* Own marker rather than the platform triangle, which sizes and colours itself
+   and would be the one thing in the sidebar that does. */
+.finder-help > summary::before {
+  content: "";
+  flex: 0 0 auto;
+  /* Centred on the first line of a summary that may wrap to two. */
+  margin-top: 5px;
+  width: 0;
+  height: 0;
+  border: 4px solid transparent;
+  border-left-color: currentColor;
+  transition: transform 0.15s;
+}
+
+.finder-help[open] > summary::before {
+  transform: rotate(90deg);
+}
+
+.finder-help > summary:hover {
+  color: var(--text-dim);
+}
+
+/* Beats `.finder p` on source order alone -- same specificity, so these rules
+   have to stay below it. */
+.finder-help p {
+  margin: 9px 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-dim);
+}
+
+.note-alg {
+  font-family: "JetBrains Mono Variable", "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 11px;
+  color: var(--text-dim);
+  background: var(--bg-raised);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 1px 5px;
+  white-space: nowrap;
+}
+
 /* ---------- grid ---------- */
 
 .grid-head {

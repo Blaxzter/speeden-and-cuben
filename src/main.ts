@@ -471,6 +471,57 @@ function optRow<K extends keyof Finder>(k: K, opts: Opt[], cols: number, locked:
   return row;
 }
 
+/**
+ * Whether the stuck-piece note is open. Held out here because answering a
+ * question rebuilds the whole sidebar, and a note that snapped shut under the
+ * next click would never be read to the end.
+ */
+let stuckOpen = false;
+
+/**
+ * The one cube the four questions cannot describe: a piece sitting in a slot
+ * that is not its own. That is not a 42nd case, it is a cube that has to be
+ * taken apart before any of these apply — so it is an aside rather than an
+ * answer tile, and it sits under the count because "none of these fit" is
+ * exactly the moment it gets asked.
+ */
+function stuckNote() {
+  const d = el("details", "finder-help") as HTMLDetailsElement;
+  d.open = stuckOpen;
+  d.ontoggle = () => {
+    stuckOpen = d.open;
+  };
+  d.append(el("summary", undefined, "Piece stuck in another slot?"));
+
+  const alg = (moves: string) => el("span", "note-alg", moves);
+  const text = (s: string) => document.createTextNode(s);
+
+  d.append(
+    el(
+      "p",
+      undefined,
+      "“In slot” above means this pair's own slot. A piece sitting in one of the other " +
+        "three is none of the 41 — every case here starts with the pair in the U layer or " +
+        "in the slot you are filling, so that piece has to come out first.",
+    ),
+  );
+
+  const how = el("p");
+  how.append(
+    text("Turn the cube until the slot holding it is at front-right and do "),
+    alg("R U R'"),
+    text(
+      ". The slot's pair lifts into the U layer and the top-layer pair drops in behind it, " +
+        "so turning back leaves you on one of the cases above. ",
+    ),
+    alg("R U' R'"),
+    text(" empties the same slot the other way — take whichever drops the freed piece nearer its own partner."),
+  );
+  d.append(how);
+
+  return d;
+}
+
 /** How many filters the user has actually set — what the collapsed bar reports. */
 function activeFilterCount() {
   const answered = state.set === "F2L" ? Object.values(state.finder).filter((v) => v !== null).length : 0;
@@ -553,6 +604,7 @@ function renderSidebar() {
     }
 
     box.append(el("p", "finder-count", finderProgress()));
+    box.append(stuckNote());
 
     const reset = el("button", "finder-reset", "Clear finder") as HTMLButtonElement;
     reset.onclick = () => {
